@@ -19,6 +19,7 @@ import {
   upsertActionRecordsForDate,
 } from "@/lib/local-storage";
 import { useGrowthLoopLocalData } from "@/hooks/use-growthloop-local-data";
+import type { Action } from "@/types";
 
 // ==================== 常量 ====================
 const USER_ID = "local-user-001";
@@ -74,13 +75,20 @@ export default function CheckInPage() {
   const date = todayStr();
 
   // 从 hook 获取本地数据（含响应式刷新能力）
-  const { dailyLogs: localDailyLogs, actionRecords: localActionRecords } =
-    useGrowthLoopLocalData();
+  const {
+    dailyLogs: localDailyLogs,
+    actionRecords: localActionRecords,
+    actions: localActions,
+  } = useGrowthLoopLocalData();
 
-  // ===== 今日应执行的行动列表（来自 mock） =====
+  // 今日行动来源：优先 localActions，无数据时 fallback mock
+  const actionSource: Action[] =
+    localActions.length > 0 ? localActions : mockActions;
+
+  // ===== 今日应执行的行动列表 =====
   const todayActions = useMemo(
-    () => getTodayActions(mockActions, localActionRecords),
-    [localActionRecords],
+    () => getTodayActions(actionSource, localActionRecords),
+    [actionSource, localActionRecords],
   );
 
   // ===== 初始化今日 DailyLog & ActionRecords =====

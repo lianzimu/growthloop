@@ -10,10 +10,12 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import type { DailyLog, ActionRecord } from "@/types";
+import type { DailyLog, ActionRecord, Goal, Action } from "@/types";
 import {
   getLocalDailyLogs,
   getLocalActionRecords,
+  getLocalGoals,
+  getLocalActions,
   DATA_UPDATED_EVENT,
 } from "@/lib/local-storage";
 
@@ -22,6 +24,10 @@ export interface GrowthLoopLocalData {
   actionRecords: ActionRecord[];
   hasLocalDailyLogs: boolean;
   hasLocalActionRecords: boolean;
+  goals: Goal[];
+  actions: Action[];
+  hasLocalGoals: boolean;
+  hasLocalActions: boolean;
   refresh: () => void;
 }
 
@@ -33,11 +39,15 @@ export function useGrowthLoopLocalData(): GrowthLoopLocalData {
   const [actionRecords, setActionRecords] = useState<ActionRecord[]>(
     () => getLocalActionRecords(),
   );
+  const [goals, setGoals] = useState<Goal[]>(() => getLocalGoals());
+  const [actions, setActions] = useState<Action[]>(() => getLocalActions());
 
   // 统一的刷新函数
   const refresh = useCallback(() => {
     setDailyLogs(getLocalDailyLogs());
     setActionRecords(getLocalActionRecords());
+    setGoals(getLocalGoals());
+    setActions(getLocalActions());
   }, []);
 
   useEffect(() => {
@@ -50,7 +60,9 @@ export function useGrowthLoopLocalData(): GrowthLoopLocalData {
     const onStorage = (e: StorageEvent) => {
       if (
         e.key === "growthloop_daily_logs" ||
-        e.key === "growthloop_action_records"
+        e.key === "growthloop_action_records" ||
+        e.key === "growthloop_goals" ||
+        e.key === "growthloop_actions"
       ) {
         refresh();
       }
@@ -74,12 +86,18 @@ export function useGrowthLoopLocalData(): GrowthLoopLocalData {
 
   const hasLocalDailyLogs = dailyLogs.length > 0;
   const hasLocalActionRecords = actionRecords.length > 0;
+  const hasLocalGoals = goals.length > 0;
+  const hasLocalActions = actions.length > 0;
 
   return {
     dailyLogs,
     actionRecords,
     hasLocalDailyLogs,
     hasLocalActionRecords,
+    goals,
+    actions,
+    hasLocalGoals,
+    hasLocalActions,
     refresh,
   };
 }

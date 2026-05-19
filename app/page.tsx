@@ -7,28 +7,33 @@
 
 "use client";
 
-import { actions, actionRecords as mockActionRecords, dailyLogs as mockDailyLogs, goals } from "@/lib/mock-data";
+import { actions as mockActions, actionRecords as mockActionRecords, dailyLogs as mockDailyLogs, goals as mockGoals } from "@/lib/mock-data";
 import {
   getTodayActions,
   getWeekCompletionRate,
   getRecentDailyLogs,
 } from "@/lib/stats";
 import { useGrowthLoopLocalData } from "@/hooks/use-growthloop-local-data";
+import type { Action, Goal } from "@/types";
 
 export default function HomePage() {
   const {
     dailyLogs: localDailyLogs,
     actionRecords: localActionRecords,
+    actions: localActions,
+    goals: localGoals,
   } = useGrowthLoopLocalData();
 
   // 优先 localStorage，无数据 fallback mock
   const logs = localDailyLogs.length > 0 ? localDailyLogs : mockDailyLogs;
   const records = localActionRecords.length > 0 ? localActionRecords : mockActionRecords;
+  const actionSource: Action[] = localActions.length > 0 ? localActions : mockActions;
+  const goalSource: Goal[] = localGoals.length > 0 ? localGoals : mockGoals;
 
-  const todayActions = getTodayActions(actions, records);
+  const todayActions = getTodayActions(actionSource, records);
   const weekRate = getWeekCompletionRate(records);
   const recentLogs = getRecentDailyLogs(logs, 3);
-  const mainGoal = goals.find((g) => g.isMainFocus);
+  const mainGoal = goalSource.find((g) => g.isMainFocus);
 
   // 完成率百分比
   const ratePercent = Math.round(weekRate.rate * 100);

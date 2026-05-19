@@ -13,11 +13,13 @@
  * - Dashboard / Review 通过监听此事件实现响应式刷新
  */
 
-import type { DailyLog, ActionRecord } from "@/types";
+import type { DailyLog, ActionRecord, Goal, Action } from "@/types";
 
 // ==================== 常量 ====================
 const DAILY_LOGS_KEY = "growthloop_daily_logs";
 const ACTION_RECORDS_KEY = "growthloop_action_records";
+const GOALS_KEY = "growthloop_goals";
+const ACTIONS_KEY = "growthloop_actions";
 export const DATA_UPDATED_EVENT = "growthloop:data-updated";
 
 // ==================== 浏览器环境判断 ====================
@@ -188,4 +190,123 @@ export function upsertActionRecordsForDate(
   const deduped = Array.from(dedupedMap.values());
   const updated = [...filtered, ...deduped];
   saveLocalActionRecords(updated);
+}
+
+// ==================== Goals ====================
+
+/**
+ * 读取所有本地 Goal。
+ * 如果 localStorage 没有数据，返回空数组。
+ */
+export function getLocalGoals(): Goal[] {
+  if (!isBrowser()) return [];
+  try {
+    const raw = localStorage.getItem(GOALS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed;
+  } catch {
+    return [];
+  }
+}
+
+export function saveLocalGoals(goals: Goal[]): void {
+  if (!isBrowser()) return;
+  try {
+    localStorage.setItem(GOALS_KEY, JSON.stringify(goals));
+    notifyDataUpdated();
+  } catch {
+    // 静默失败
+  }
+}
+
+/**
+ * 按 goal.id 覆盖式保存。
+ * 如果已存在同 id 目标，则替换；否则追加。
+ */
+export function upsertLocalGoal(goal: Goal): void {
+  const goals = getLocalGoals();
+  const idx = goals.findIndex((g) => g.id === goal.id);
+  const now = new Date().toISOString();
+  if (idx >= 0) {
+    goals[idx] = { ...goal, updatedAt: now };
+  } else {
+    goals.push({ ...goal, updatedAt: now });
+  }
+  saveLocalGoals(goals);
+}
+
+/**
+ * 删除指定 id 的目标。
+ * TODO: 暂不级联删除关联的 actions，后续接入 Supabase 后由数据库外键处理。
+ */
+export function deleteLocalGoal(goalId: string): void {
+  if (!isBrowser()) return;
+  try {
+    const goals = getLocalGoals();
+    const filtered = goals.filter((g) => g.id !== goalId);
+    saveLocalGoals(filtered);
+  } catch {
+    // 静默失败
+  }
+}
+
+// ==================== Actions ====================
+
+/**
+ * 读取所有本地 Action。
+ * 如果 localStorage 没有数据，返回空数组。
+ */
+export function getLocalActions(): Action[] {
+  if (!isBrowser()) return [];
+  try {
+    const raw = localStorage.getItem(ACTIONS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed;
+  } catch {
+    return [];
+  }
+}
+
+export function saveLocalActions(actions: Action[]): void {
+  if (!isBrowser()) return;
+  try {
+    localStorage.setItem(ACTIONS_KEY, JSON.stringify(actions));
+    notifyDataUpdated();
+  } catch {
+    // 静默失败
+  }
+}
+
+/**
+ * 按 action.id 覆盖式保存。
+ * 如果已存在同 id 行动，则替换；否则追加。
+ */
+export function upsertLocalAction(action: Action): void {
+  const actions = getLocalActions();
+  const idx = actions.findIndex((a) => a.id === action.id);
+  const now = new Date().toISOString();
+  if (idx >= 0) {
+    actions[idx] = { ...action, updatedAt: now };
+  } else {
+    actions.push({ ...action, updatedAt: now });
+  }
+  saveLocalActions(actions);
+}
+
+/**
+ * 删除指定 id 的行动。
+ */
+export function deleteLocalAction(actionId: string): void {
+  if (!isBrowser()) return;
+  try {
+    const actions = getLocalActions();
+    const filtered = actions.filter((a) => a.id !== actionId);
+    saveLocalActions(filtered);
+  } catch {
+    // 静默失败
+  }
 }
