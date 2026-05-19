@@ -1,8 +1,8 @@
 /**
  * 每日记录页 - Daily Check-in（可交互版）
  *
- * Milestone 2 Step 2: 用户可以填写状态评分、行动状态、笔记、卡点，
- * 并保存到 localStorage。刷新后数据仍在。
+ * Milestone 2 Step 2.1: 使用稳定 ID、useGrowthLoopLocalData hook、
+ * localStorage 事件机制实现 upsert 与跨页面响应式刷新。
  */
 
 "use client";
@@ -13,24 +13,20 @@ import { actions as mockActions } from "@/lib/mock-data";
 import { getTodayActions } from "@/lib/stats";
 import {
   todayStr,
-  getLocalDailyLogs,
-  getLocalActionRecords,
+  stableDailyLogId,
+  stableActionRecordId,
   upsertTodayDailyLog,
   upsertActionRecordsForDate,
 } from "@/lib/local-storage";
+import { useGrowthLoopLocalData } from "@/hooks/use-growthloop-local-data";
 
 // ==================== 常量 ====================
 const USER_ID = "local-user-001";
 
-// ==================== 辅助：生成 ID ====================
-function genId(prefix: string): string {
-  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
 // ==================== 默认 DailyLog 模板 ====================
 function emptyDailyLog(date: string): DailyLog {
   return {
-    id: genId("log"),
+    id: stableDailyLogId(date),
     userId: USER_ID,
     date,
     sleepHours: 0,
@@ -77,43 +73,49 @@ const ACTION_STATUS_OPTIONS: {
 export default function CheckInPage() {
   const date = todayStr();
 
-  // ===== 状态 =====
-  // 今日应执行的行动列表（来自 mock，用于展示选项）
-  const todayActions = useMemo(() => getTodayActions(mockActions, []), []);
+  // 从 hook 获取本地数据（含响应式刷新能力）
+  const { dailyLogs: localDailyLogs, actionRecords: localActionRecords } =
+    useGrowthLoopLocalData();
 
-  // 从 localStorage 读取今天的记录（初始化）
+  // ===== 今日应执行的行动列表（来自 mock） =====
+  const todayActions = useMemo(
+    () => getTodayActions(mockActions, localActionRecords),
+    [localActionRecords],
+  );
+
+  // ===== 初始化今日 DailyLog & ActionRecords =====
   const initialData = useMemo(() => {
-    const localLogs = getLocalDailyLogs();
-    const localRecords = getLocalActionRecords();
-    const existingLog = localLogs.find((l) => l.date === date) ?? null;
-    const existingRecords = localRecords.filter((r) => r.date === date);
+    const existingLog = localDailyLogs.find((l) => l.date === date) ?? null;
+    const existingRecords = localActionRecords.filter((r) => r.date === date);
 
-    // 如果没有记录，为每个今日行动创建空白记录
+    const log = existingLog ?? emptyDailyLog(date);
+
+    // 如果没有今日记录，为每个今日行动创建空白记录（使用稳定 ID）
     let records: ActionRecord[];
     if (existingRecords.length > 0) {
       records = existingRecords;
     } else {
+      const now = new Date().toISOString();
       records = todayActions.map(({ action }) => ({
-        id: genId("rec"),
+        id: stableActionRecordId(date, action.id),
         userId: USER_ID,
         actionId: action.id,
-        dailyLogId: existingLog?.id ?? "",
+        dailyLogId: log.id,
         date,
         status: "skipped" as ActionRecordStatus,
         note: "",
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
+        createdAt: now,
+        updatedAt: now,
       }));
     }
 
-    return {
-      log: existingLog ?? emptyDailyLog(date),
-      records,
-    };
-  }, [date, todayActions]);
+    return { log, records };
+  }, [date, localDailyLogs, localActionRecords, todayActions]);
 
   const [dailyLog, setDailyLog] = useState<DailyLog>(initialData.log);
-  const [actionRecords, setActionRecords] = useState<ActionRecord[]>(initialData.records);
+  const [actionRecords, setActionRecords] = useState<ActionRecord[]>(
+    initialData.records,
+  );
   const [saved, setSaved] = useState(false);
 
   // ===== 更新 DailyLog 字段 =====
@@ -158,8 +160,22 @@ export default function CheckInPage() {
 
   // ===== 保存 =====
   const handleSave = useCallback(() => {
-    upsertTodayDailyLog(dailyLog);
-    upsertActionRecordsForDate(date, actionRecords);
+    // 确保 id 稳定
+    const logWithStableId = { ...dailyLog, id: stableDailyLogId(date) };
+    upsertTodayDailyLog(logWithStableId);
+
+    const recordsWithStableId = actionRecords.map((r) => ({
+      ...r,
+      id: stableActionRecordId(date, r.actionId),
+      dailyLogId: stableDailyLogId(date),
+      updatedAt: new Date().toISOString(),
+    }));
+    upsertActionRecordsForDate(date, recordsWithStableId);
+
+    // 更新本地 state 为稳定 ID 版本（便于回显）
+    setDailyLog(logWithStableId);
+    setActionRecords(recordsWithStableId);
+
     setSaved(true);
     // 3 秒后隐藏提示
     setTimeout(() => setSaved(false), 3000);

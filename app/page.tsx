@@ -1,9 +1,11 @@
 /**
  * 首页 - 每日一览 Dashboard
  *
- * Milestone 2: 使用 mock 数据展示真实统计信息。
- * 展示：问候语 + 今日重点行动 + 本周完成率 + 最近 3 天状态 + AI 建议占位
+ * Milestone 2 Step 2.1: 使用 useGrowthLoopLocalData 实现响应式数据读取。
+ * localStorage 有数据优先用，无数据 fallback mock。
  */
+
+"use client";
 
 import { actions, actionRecords as mockActionRecords, dailyLogs as mockDailyLogs, goals } from "@/lib/mock-data";
 import {
@@ -11,16 +13,15 @@ import {
   getWeekCompletionRate,
   getRecentDailyLogs,
 } from "@/lib/stats";
-import {
-  getLocalDailyLogs,
-  getLocalActionRecords,
-} from "@/lib/local-storage";
+import { useGrowthLoopLocalData } from "@/hooks/use-growthloop-local-data";
 
 export default function HomePage() {
-  // 优先读取 localStorage，没有数据则 fallback 到 mock data
-  const localDailyLogs = getLocalDailyLogs();
-  const localActionRecords = getLocalActionRecords();
+  const {
+    dailyLogs: localDailyLogs,
+    actionRecords: localActionRecords,
+  } = useGrowthLoopLocalData();
 
+  // 优先 localStorage，无数据 fallback mock
   const logs = localDailyLogs.length > 0 ? localDailyLogs : mockDailyLogs;
   const records = localActionRecords.length > 0 ? localActionRecords : mockActionRecords;
 

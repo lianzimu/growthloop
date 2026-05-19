@@ -1,27 +1,26 @@
 /**
  * 周复盘页 - 每周总结与回顾
  *
- * Milestone 2: 使用 mock 数据和统计函数展示本周复盘指标。
- * 展示：
- * - 行动完成率（标准/最低/失败/跳过）
- * - 平均睡眠/精力/情绪/压力
- * - AI 复盘占位
+ * Milestone 2 Step 2.1: 使用 useGrowthLoopLocalData 实现响应式数据读取。
+ * localStorage 有数据优先用，无数据 fallback mock。
  */
+
+"use client";
 
 import { actionRecords as mockActionRecords, dailyLogs as mockDailyLogs } from "@/lib/mock-data";
 import { getWeeklyReviewStats } from "@/lib/stats";
-import {
-  getLocalDailyLogs,
-  getLocalActionRecords,
-} from "@/lib/local-storage";
+import { useGrowthLoopLocalData } from "@/hooks/use-growthloop-local-data";
 
 export default function ReviewPage() {
-  // 优先读取 localStorage，没有数据则 fallback 到 mock data
-  const localDailyLogs = getLocalDailyLogs();
-  const localActionRecords = getLocalActionRecords();
+  const {
+    dailyLogs: localDailyLogs,
+    actionRecords: localActionRecords,
+  } = useGrowthLoopLocalData();
 
+  // 优先 localStorage，无数据 fallback mock
   const logs = localDailyLogs.length > 0 ? localDailyLogs : mockDailyLogs;
-  const records = localActionRecords.length > 0 ? localActionRecords : mockActionRecords;
+  const records =
+    localActionRecords.length > 0 ? localActionRecords : mockActionRecords;
 
   const stats = getWeeklyReviewStats(logs, records);
 
