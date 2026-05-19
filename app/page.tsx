@@ -5,17 +5,28 @@
  * 展示：问候语 + 今日重点行动 + 本周完成率 + 最近 3 天状态 + AI 建议占位
  */
 
-import { actions, actionRecords, dailyLogs, goals } from "@/lib/mock-data";
+import { actions, actionRecords as mockActionRecords, dailyLogs as mockDailyLogs, goals } from "@/lib/mock-data";
 import {
   getTodayActions,
   getWeekCompletionRate,
   getRecentDailyLogs,
 } from "@/lib/stats";
+import {
+  getLocalDailyLogs,
+  getLocalActionRecords,
+} from "@/lib/local-storage";
 
 export default function HomePage() {
-  const todayActions = getTodayActions(actions, actionRecords);
-  const weekRate = getWeekCompletionRate(actionRecords);
-  const recentLogs = getRecentDailyLogs(dailyLogs, 3);
+  // 优先读取 localStorage，没有数据则 fallback 到 mock data
+  const localDailyLogs = getLocalDailyLogs();
+  const localActionRecords = getLocalActionRecords();
+
+  const logs = localDailyLogs.length > 0 ? localDailyLogs : mockDailyLogs;
+  const records = localActionRecords.length > 0 ? localActionRecords : mockActionRecords;
+
+  const todayActions = getTodayActions(actions, records);
+  const weekRate = getWeekCompletionRate(records);
+  const recentLogs = getRecentDailyLogs(logs, 3);
   const mainGoal = goals.find((g) => g.isMainFocus);
 
   // 完成率百分比

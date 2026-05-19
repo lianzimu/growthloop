@@ -8,11 +8,22 @@
  * - AI 复盘占位
  */
 
-import { actionRecords, dailyLogs } from "@/lib/mock-data";
+import { actionRecords as mockActionRecords, dailyLogs as mockDailyLogs } from "@/lib/mock-data";
 import { getWeeklyReviewStats } from "@/lib/stats";
+import {
+  getLocalDailyLogs,
+  getLocalActionRecords,
+} from "@/lib/local-storage";
 
 export default function ReviewPage() {
-  const stats = getWeeklyReviewStats(dailyLogs, actionRecords);
+  // 优先读取 localStorage，没有数据则 fallback 到 mock data
+  const localDailyLogs = getLocalDailyLogs();
+  const localActionRecords = getLocalActionRecords();
+
+  const logs = localDailyLogs.length > 0 ? localDailyLogs : mockDailyLogs;
+  const records = localActionRecords.length > 0 ? localActionRecords : mockActionRecords;
+
+  const stats = getWeeklyReviewStats(logs, records);
 
   // 本周日期范围
   const today = new Date();
