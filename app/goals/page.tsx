@@ -3,11 +3,12 @@
  *
  * Milestone 2 Step 3: 本地优先，无数据 fallback mock。
  * 支持新增目标和行动（卡片内表单，可折叠）。
+ * Milestone 2 Step 4: 表单校验、空状态优化、本地数据管理。
  */
 
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import type {
   Goal,
   Action,
@@ -20,7 +21,13 @@ import {
   goals as mockGoals,
   actions as mockActions,
 } from "@/lib/mock-data";
-import { upsertLocalGoal, upsertLocalAction } from "@/lib/local-storage";
+import {
+  upsertLocalGoal,
+  upsertLocalAction,
+  exportAllLocalData,
+  importAllLocalData,
+  clearAllLocalData,
+} from "@/lib/local-storage";
 import { useGrowthLoopLocalData } from "@/hooks/use-growthloop-local-data";
 
 // ==================== 常量 ====================
@@ -83,14 +90,68 @@ function emptyActionForm(): {
   };
 }
 
+// ==================== 校验 ====================
+interface GoalFormErrors {
+  title?: string;
+  domainId?: string;
+  horizon?: string;
+}
+
+interface ActionFormErrors {
+  title?: string;
+  goalId?: string;
+  standardVersion?: string;
+  minimumVersion?: string;
+}
+
+function validateGoalForm(form: ReturnType<typeof emptyGoalForm>): GoalFormErrors {
+  const errors: GoalFormErrors = {};
+  if (!form.title.trim()) {
+    errors.title = "目标名称不能为空";
+  }
+  if (!form.domainId) {
+    errors.domainId = "必须选择领域";
+  }
+  if (!form.horizon) {
+    errors.horizon = "必须选择目标周期";
+  }
+  return errors;
+}
+
+function validateActionForm(form: ReturnType<typeof emptyActionForm>): ActionFormErrors {
+  const errors: ActionFormErrors = {};
+  if (!form.title.trim()) {
+    errors.title = "行动名称不能为空";
+  }
+  if (!form.goalId) {
+    errors.goalId = "必须选择所属目标";
+  }
+  if (!form.standardVersion.trim()) {
+    errors.standardVersion = "标准行动版本不能为空";
+  }
+  if (!form.minimumVersion.trim()) {
+    errors.minimumVersion = "最低行动版本不能为空";
+  }
+  return errors;
+}
+
 // ==================== 组件 ====================
 export default function GoalsPage() {
-  const { goals: localGoals, actions: localActions } =
-    useGrowthLoopLocalData();
+  const {
+    goals: localGoals,
+    actions: localActions,
+    hasLocalGoals,
+    hasLocalActions,
+  } = useGrowthLoopLocalData();
 
   // --- 数据源：local 优先，fallback mock ---
-  const allGoals: Goal[] = localGoals.length > 0 ? localGoals : mockGoals;
-  const allActions: Action[] = localActions.length > 0 ? localActions : mockActions;
+  // 如果用户已创建本地 goals 但没有本地 actions → 不用 mock actions
+  const allGoals: Goal[] = hasLocalGoals ? localGoals : mockGoals;
+  const allActions: Action[] = hasLocalActions
+    ? localActions
+    : hasLocalGoals
+      ? []
+      : mockActions;
 
   // --- 表单折叠状态 ---
   const [showGoalForm, setShowGoalForm] = useState(false);
@@ -100,13 +161,27 @@ export default function GoalsPage() {
   const [goalForm, setGoalForm] = useState(emptyGoalForm);
   const [actionForm, setActionForm] = useState(emptyActionForm);
 
+  // --- 校验错误 ---
+  const [goalErrors, setGoalErrors] = useState<GoalFormErrors>({});
+  const [actionErrors, setActionErrors] = useState<ActionFormErrors>({});
+
   // --- 保存提示 ---
   const [goalSaved, setGoalSaved] = useState(false);
+  const [goalSaveError, setGoalSaveError] = useState(false);
   const [actionSaved, setActionSaved] = useState(false);
+  const [actionSaveError, setActionSaveError] = useState(false);
 
   // --- 新增目标 ---
   const handleSaveGoal = useCallback(() => {
-    if (!goalForm.title.trim()) return;
+    const errors = validateGoalForm(goalForm);
+    setGoalErrors(errors);
+
+    if (Object.keys(errors).length > 0) {
+      setGoalSaveError(true);
+      setTimeout(() => setGoalSaveError(false), 3000);
+      return;
+    }
+
     const now = new Date().toISOString();
     const newGoal: Goal = {
       id: `goal-${Date.now()}`,
@@ -122,13 +197,22 @@ export default function GoalsPage() {
     };
     upsertLocalGoal(newGoal);
     setGoalForm(emptyGoalForm());
+    setGoalErrors({});
     setGoalSaved(true);
     setTimeout(() => setGoalSaved(false), 3000);
   }, [goalForm]);
 
   // --- 新增行动 ---
   const handleSaveAction = useCallback(() => {
-    if (!actionForm.title.trim() || !actionForm.goalId) return;
+    const errors = validateActionForm(actionForm);
+    setActionErrors(errors);
+
+    if (Object.keys(errors).length > 0) {
+      setActionSaveError(true);
+      setTimeout(() => setActionSaveError(false), 3000);
+      return;
+    }
+
     const now = new Date().toISOString();
     const newAction: Action = {
       id: `act-${Date.now()}`,
@@ -147,9 +231,74 @@ export default function GoalsPage() {
     };
     upsertLocalAction(newAction);
     setActionForm(emptyActionForm());
+    setActionErrors({});
     setActionSaved(true);
     setTimeout(() => setActionSaved(false), 3000);
   }, [actionForm]);
+
+  // ===== 本地数据管理 =====
+  const [showDataManager, setShowDataManager] = useState(false);
+  const [importMsg, setImportMsg] = useState<"success" | "error" | null>(null);
+  const [clearConfirm, setClearConfirm] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleExport = useCallback(() => {
+    const data = exportAllLocalData();
+    const json = JSON.stringify(data, null, 2);
+    const blob = new Blob([json], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `growthloop-backup-${new Date().toISOString().split("T")[0]}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, []);
+
+  const handleImport = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = (evt) => {
+        try {
+          const raw = evt.target?.result;
+          if (typeof raw !== "string") {
+            setImportMsg("error");
+            return;
+          }
+          const parsed = JSON.parse(raw);
+          const ok = importAllLocalData(parsed);
+          setImportMsg(ok ? "success" : "error");
+        } catch {
+          setImportMsg("error");
+        }
+        setTimeout(() => setImportMsg(null), 3000);
+      };
+      reader.onerror = () => {
+        setImportMsg("error");
+        setTimeout(() => setImportMsg(null), 3000);
+      };
+      reader.readAsText(file);
+
+      // 重置 input 以允许重复导入同一文件
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    },
+    [],
+  );
+
+  const handleClear = useCallback(() => {
+    if (!clearConfirm) {
+      setClearConfirm(true);
+      return;
+    }
+    clearAllLocalData();
+    setClearConfirm(false);
+  }, [clearConfirm]);
 
   // --- 展示用派生数据 ---
   // 本周主线目标
@@ -173,6 +322,9 @@ export default function GoalsPage() {
       };
     });
 
+  // 是否有任何活跃目标
+  const hasAnyGoal = allGoals.some((g) => g.status === "active");
+
   return (
     <div className="space-y-6">
       {/* ===== 页面标题 ===== */}
@@ -181,7 +333,16 @@ export default function GoalsPage() {
         <h1 className="text-xl font-semibold mt-1">我的目标</h1>
       </section>
 
-      {/* ===== 本周主线 ===== */}
+      {/* ===== 空状态：全局 ===== */}
+      {!hasAnyGoal && (
+        <section className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-6 bg-white dark:bg-zinc-900 text-center">
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">
+            还没有目标，先创建一个本周主线目标
+          </p>
+        </section>
+      )}
+
+      {/* ===== 本周主线目标 ===== */}
       <section className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-4 bg-white dark:bg-zinc-900">
         <h2 className="text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wide">
           本周主线
@@ -233,7 +394,7 @@ export default function GoalsPage() {
           </div>
         ) : (
           <p className="text-sm text-zinc-400 dark:text-zinc-500 mt-3">
-            暂无主线目标
+            还没有主线目标，请先创建或设置主线目标
           </p>
         )}
       </section>
@@ -292,10 +453,16 @@ export default function GoalsPage() {
                 {domain.description}
               </p>
             )}
-            <div className="mt-2 flex gap-4 text-xs text-zinc-500 dark:text-zinc-400">
-              <span>{goalCount} 个目标</span>
-              <span>{actionCount} 个行动</span>
-            </div>
+            {goalCount > 0 ? (
+              <div className="mt-2 flex gap-4 text-xs text-zinc-500 dark:text-zinc-400">
+                <span>{goalCount} 个目标</span>
+                <span>{actionCount} 个行动</span>
+              </div>
+            ) : (
+              <p className="mt-2 text-xs text-zinc-400 dark:text-zinc-500">
+                暂无目标
+              </p>
+            )}
           </div>
         ))}
       </section>
@@ -324,12 +491,24 @@ export default function GoalsPage() {
               <input
                 type="text"
                 value={goalForm.title}
-                onChange={(e) =>
-                  setGoalForm((f) => ({ ...f, title: e.target.value }))
-                }
+                onChange={(e) => {
+                  setGoalForm((f) => ({ ...f, title: e.target.value }));
+                  if (goalErrors.title) {
+                    setGoalErrors((prev) => ({ ...prev, title: undefined }));
+                  }
+                }}
                 placeholder="例如：每周运动 2 次"
-                className="mt-1 w-full rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                className={`mt-1 w-full rounded-lg border bg-zinc-50 dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500 ${
+                  goalErrors.title
+                    ? "border-red-400 dark:border-red-500"
+                    : "border-zinc-200 dark:border-zinc-700"
+                }`}
               />
+              {goalErrors.title && (
+                <p className="mt-1 text-xs text-red-500 dark:text-red-400">
+                  {goalErrors.title}
+                </p>
+              )}
             </div>
 
             {/* 领域 */}
@@ -339,10 +518,17 @@ export default function GoalsPage() {
               </label>
               <select
                 value={goalForm.domainId}
-                onChange={(e) =>
-                  setGoalForm((f) => ({ ...f, domainId: e.target.value }))
-                }
-                className="mt-1 w-full rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                onChange={(e) => {
+                  setGoalForm((f) => ({ ...f, domainId: e.target.value }));
+                  if (goalErrors.domainId) {
+                    setGoalErrors((prev) => ({ ...prev, domainId: undefined }));
+                  }
+                }}
+                className={`mt-1 w-full rounded-lg border bg-zinc-50 dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500 ${
+                  goalErrors.domainId
+                    ? "border-red-400 dark:border-red-500"
+                    : "border-zinc-200 dark:border-zinc-700"
+                }`}
               >
                 {mockDomains.map((d) => (
                   <option key={d.id} value={d.id}>
@@ -350,6 +536,11 @@ export default function GoalsPage() {
                   </option>
                 ))}
               </select>
+              {goalErrors.domainId && (
+                <p className="mt-1 text-xs text-red-500 dark:text-red-400">
+                  {goalErrors.domainId}
+                </p>
+              )}
             </div>
 
             {/* 时间周期 */}
@@ -408,14 +599,18 @@ export default function GoalsPage() {
             <button
               type="button"
               onClick={handleSaveGoal}
-              disabled={!goalForm.title.trim()}
-              className="w-full rounded-lg bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-500 dark:hover:bg-emerald-600 text-white font-medium py-2 text-sm transition disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full rounded-lg bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-500 dark:hover:bg-emerald-600 text-white font-medium py-2 text-sm transition"
             >
               保存目标
             </button>
             {goalSaved && (
               <p className="text-center text-xs text-emerald-600 dark:text-emerald-400">
                 ✓ 目标已保存
+              </p>
+            )}
+            {goalSaveError && (
+              <p className="text-center text-xs text-red-500 dark:text-red-400">
+                请检查表单中的错误
               </p>
             )}
           </div>
@@ -446,12 +641,24 @@ export default function GoalsPage() {
               <input
                 type="text"
                 value={actionForm.title}
-                onChange={(e) =>
-                  setActionForm((f) => ({ ...f, title: e.target.value }))
-                }
+                onChange={(e) => {
+                  setActionForm((f) => ({ ...f, title: e.target.value }));
+                  if (actionErrors.title) {
+                    setActionErrors((prev) => ({ ...prev, title: undefined }));
+                  }
+                }}
                 placeholder="例如：运动 30 分钟"
-                className="mt-1 w-full rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                className={`mt-1 w-full rounded-lg border bg-zinc-50 dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500 ${
+                  actionErrors.title
+                    ? "border-red-400 dark:border-red-500"
+                    : "border-zinc-200 dark:border-zinc-700"
+                }`}
               />
+              {actionErrors.title && (
+                <p className="mt-1 text-xs text-red-500 dark:text-red-400">
+                  {actionErrors.title}
+                </p>
+              )}
             </div>
 
             {/* 所属目标 */}
@@ -461,10 +668,17 @@ export default function GoalsPage() {
               </label>
               <select
                 value={actionForm.goalId}
-                onChange={(e) =>
-                  setActionForm((f) => ({ ...f, goalId: e.target.value }))
-                }
-                className="mt-1 w-full rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                onChange={(e) => {
+                  setActionForm((f) => ({ ...f, goalId: e.target.value }));
+                  if (actionErrors.goalId) {
+                    setActionErrors((prev) => ({ ...prev, goalId: undefined }));
+                  }
+                }}
+                className={`mt-1 w-full rounded-lg border bg-zinc-50 dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500 ${
+                  actionErrors.goalId
+                    ? "border-red-400 dark:border-red-500"
+                    : "border-zinc-200 dark:border-zinc-700"
+                }`}
               >
                 <option value="">请选择目标</option>
                 {allGoals
@@ -475,44 +689,84 @@ export default function GoalsPage() {
                     </option>
                   ))}
               </select>
+              {allGoals.filter((g) => g.status === "active").length === 0 && (
+                <p className="mt-1 text-xs text-zinc-400 dark:text-zinc-500">
+                  请先创建目标
+                </p>
+              )}
+              {actionErrors.goalId && (
+                <p className="mt-1 text-xs text-red-500 dark:text-red-400">
+                  {actionErrors.goalId}
+                </p>
+              )}
             </div>
 
             {/* 标准版本 */}
             <div>
               <label className="text-xs font-medium text-zinc-600 dark:text-zinc-400">
-                标准版本
+                标准版本 *
               </label>
               <input
                 type="text"
                 value={actionForm.standardVersion}
-                onChange={(e) =>
+                onChange={(e) => {
                   setActionForm((f) => ({
                     ...f,
                     standardVersion: e.target.value,
-                  }))
-                }
+                  }));
+                  if (actionErrors.standardVersion) {
+                    setActionErrors((prev) => ({
+                      ...prev,
+                      standardVersion: undefined,
+                    }));
+                  }
+                }}
                 placeholder="例如：跑步 30 分钟"
-                className="mt-1 w-full rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                className={`mt-1 w-full rounded-lg border bg-zinc-50 dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500 ${
+                  actionErrors.standardVersion
+                    ? "border-red-400 dark:border-red-500"
+                    : "border-zinc-200 dark:border-zinc-700"
+                }`}
               />
+              {actionErrors.standardVersion && (
+                <p className="mt-1 text-xs text-red-500 dark:text-red-400">
+                  {actionErrors.standardVersion}
+                </p>
+              )}
             </div>
 
             {/* 最低版本 */}
             <div>
               <label className="text-xs font-medium text-zinc-600 dark:text-zinc-400">
-                最低版本
+                最低版本 *
               </label>
               <input
                 type="text"
                 value={actionForm.minimumVersion}
-                onChange={(e) =>
+                onChange={(e) => {
                   setActionForm((f) => ({
                     ...f,
                     minimumVersion: e.target.value,
-                  }))
-                }
+                  }));
+                  if (actionErrors.minimumVersion) {
+                    setActionErrors((prev) => ({
+                      ...prev,
+                      minimumVersion: undefined,
+                    }));
+                  }
+                }}
                 placeholder="例如：散步 10 分钟"
-                className="mt-1 w-full rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                className={`mt-1 w-full rounded-lg border bg-zinc-50 dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500 ${
+                  actionErrors.minimumVersion
+                    ? "border-red-400 dark:border-red-500"
+                    : "border-zinc-200 dark:border-zinc-700"
+                }`}
               />
+              {actionErrors.minimumVersion && (
+                <p className="mt-1 text-xs text-red-500 dark:text-red-400">
+                  {actionErrors.minimumVersion}
+                </p>
+              )}
             </div>
 
             {/* 频率 */}
@@ -581,8 +835,7 @@ export default function GoalsPage() {
             <button
               type="button"
               onClick={handleSaveAction}
-              disabled={!actionForm.title.trim() || !actionForm.goalId}
-              className="w-full rounded-lg bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-500 dark:hover:bg-emerald-600 text-white font-medium py-2 text-sm transition disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full rounded-lg bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-500 dark:hover:bg-emerald-600 text-white font-medium py-2 text-sm transition"
             >
               保存行动
             </button>
@@ -591,6 +844,81 @@ export default function GoalsPage() {
                 ✓ 行动已保存
               </p>
             )}
+            {actionSaveError && (
+              <p className="text-center text-xs text-red-500 dark:text-red-400">
+                请检查表单中的错误
+              </p>
+            )}
+          </div>
+        )}
+      </section>
+
+      {/* ===== 本地数据管理（折叠卡片） ===== */}
+      <section className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden">
+        <button
+          type="button"
+          onClick={() => setShowDataManager((v) => !v)}
+          className="w-full text-left p-4 flex items-center justify-between"
+        >
+          <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wide">
+            本地数据管理
+          </span>
+          <span className="text-xs text-zinc-400 dark:text-zinc-500">
+            {showDataManager ? "收起 ▲" : "展开 ▼"}
+          </span>
+        </button>
+
+        {showDataManager && (
+          <div className="px-4 pb-4 space-y-3">
+            <p className="text-xs text-zinc-400 dark:text-zinc-500">
+              数据保存在浏览器本地，可导出为 JSON 备份或导入恢复。
+            </p>
+
+            {/* 导出 */}
+            <button
+              type="button"
+              onClick={handleExport}
+              className="w-full rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-700 transition"
+            >
+              导出数据 (JSON)
+            </button>
+
+            {/* 导入 */}
+            <div>
+              <label className="block w-full rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-700 transition cursor-pointer text-center">
+                导入数据 (JSON)
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".json"
+                  onChange={handleImport}
+                  className="hidden"
+                />
+              </label>
+              {importMsg === "success" && (
+                <p className="mt-1 text-xs text-emerald-600 dark:text-emerald-400 text-center">
+                  ✓ 导入成功
+                </p>
+              )}
+              {importMsg === "error" && (
+                <p className="mt-1 text-xs text-red-500 dark:text-red-400 text-center">
+                  导入失败，请检查 JSON 格式
+                </p>
+              )}
+            </div>
+
+            {/* 清空 */}
+            <button
+              type="button"
+              onClick={handleClear}
+              className={`w-full rounded-lg border px-3 py-2 text-sm transition ${
+                clearConfirm
+                  ? "border-red-400 dark:border-red-500 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400"
+                  : "border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-700"
+              }`}
+            >
+              {clearConfirm ? "确认清空所有本地数据？再次点击确认" : "清空所有本地数据"}
+            </button>
           </div>
         )}
       </section>

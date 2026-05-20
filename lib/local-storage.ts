@@ -310,3 +310,101 @@ export function deleteLocalAction(actionId: string): void {
     // 静默失败
   }
 }
+
+// ==================== 批量操作 ====================
+
+/** 所有 localStorage key */
+const ALL_KEYS = [
+  DAILY_LOGS_KEY,
+  ACTION_RECORDS_KEY,
+  GOALS_KEY,
+  ACTIONS_KEY,
+] as const;
+
+/**
+ * 清空所有 GrowthLoop 本地数据。
+ * 清空后触发 growthloop:data-updated 事件。
+ */
+export function clearAllLocalData(): void {
+  if (!isBrowser()) return;
+  try {
+    for (const key of ALL_KEYS) {
+      localStorage.removeItem(key);
+    }
+    notifyDataUpdated();
+  } catch {
+    // 静默失败
+  }
+}
+
+/**
+ * 导出所有本地数据为可序列化对象。
+ * 用于 JSON 下载导出。
+ */
+export function exportAllLocalData(): {
+  goals: Goal[];
+  actions: Action[];
+  dailyLogs: DailyLog[];
+  actionRecords: ActionRecord[];
+} {
+  return {
+    goals: getLocalGoals(),
+    actions: getLocalActions(),
+    dailyLogs: getLocalDailyLogs(),
+    actionRecords: getLocalActionRecords(),
+  };
+}
+
+/** 导出数据校验结构 */
+interface ImportPayload {
+  goals?: unknown;
+  actions?: unknown;
+  dailyLogs?: unknown;
+  actionRecords?: unknown;
+}
+
+function isValidArrayOf<T>(
+  arr: unknown,
+  validator: (item: unknown) => boolean,
+): arr is T[] {
+  return Array.isArray(arr) && arr.every(validator);
+}
+
+/**
+ * 导入本地数据。
+ * 对每个字段做基本数组校验，合法则写入 localStorage。
+ * 导入后触发 growthloop:data-updated 事件。
+ * @returns 导入成功返回 true，校验失败返回 false
+ */
+export function importAllLocalData(payload: ImportPayload): boolean {
+  if (!isBrowser()) return false;
+  try {
+    // 基本校验：每个字段要么是数组，要么不存在
+    const okGoals =
+      payload.goals === undefined ||
+      isValidArrayOf<Goal>(payload.goals, (item) => typeof item === "object" && item !== null);
+    const okActions =
+      payload.actions === undefined ||
+      isValidArrayOf<Action>(payload.actions, (item) => typeof item === "object" && item !== null);
+    const okDailyLogs =
+      payload.dailyLogs === undefined ||
+      isValidArrayOf<DailyLog>(payload.dailyLogs, (item) => typeof item === "object" && item !== null);
+    const okActionRecords =
+      payload.actionRecords === undefined ||
+      isValidArrayOf<ActionRecord>(payload.actionRecords, (item) => typeof item === "object" && item !== null);
+
+    if (!okGoals || !okActions || !okDailyLogs || !okActionRecords) {
+      return false;
+    }
+
+    if (payload.goals !== undefined) saveLocalGoals(payload.goals as Goal[]);
+    if (payload.actions !== undefined) saveLocalActions(payload.actions as Action[]);
+    if (payload.dailyLogs !== undefined) saveLocalDailyLogs(payload.dailyLogs as DailyLog[]);
+    if (payload.actionRecords !== undefined) saveLocalActionRecords(payload.actionRecords as ActionRecord[]);
+
+    notifyDataUpdated();
+    return true;
+  } catch {
+    return false;
+  }
+}
