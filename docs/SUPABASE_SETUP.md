@@ -137,19 +137,70 @@ GrowthLoop 的 Supabase 接入分为多个 Step，逐步推进，每个 Step 完
 - 编写 `docs/DATABASE.md`（数据库设计文档）
 - 编写 `docs/MILESTONE_3_PLAN.md`（M3 完整规划）
 
-### Step 1：安装 Supabase SDK
+### Step 1：安装 Supabase SDK ✅（当前阶段完成）
 
-- `npm install @supabase/supabase-js @supabase/ssr`
-- 配置 `lib/supabase/client.ts`（客户端组件专用）
-- 配置 `lib/supabase/server.ts`（服务端组件专用）
-- 配置 `lib/supabase/middleware.ts`（中间件）
+已安装的依赖：
 
-### Step 2：创建 Supabase client
+| 包名 | 版本 | 用途 |
+|------|------|------|
+| `@supabase/supabase-js` | ^2.x | Supabase JS 核心 SDK，提供数据库、Auth、Storage 等 API |
+| `@supabase/ssr` | ^0.x | Supabase 官方 Next.js SSR 集成，支持 cookie 自动管理 |
 
-- 创建浏览器端 client（`createBrowserClient`）
-- 创建服务端 client（`createServerClient`）
-- 创建 API Route 用 client
-- 验证 client 可以正常连接数据库
+已创建的文件：
+
+| 文件 | 用途 |
+|------|------|
+| `lib/supabase/client.ts` | 浏览器端 client — 供 `"use client"` 组件和 Hook 使用 |
+| `lib/supabase/server.ts` | 服务端 client — 供 Server Components、Route Handlers、Server Actions 使用 |
+| `.env.example` | 环境变量模板 — 不包含真实 key，可提交到 Git |
+
+### client.ts 和 server.ts 的区别
+
+**`lib/supabase/client.ts`（浏览器端）**
+- 使用 `createBrowserClient()` 创建
+- 只能用于标记了 `"use client"` 的组件
+- 不直接操作 cookie，通过浏览器 JS 维持 session
+- 调用 API 时自动在 header 中携带当前登录用户的 JWT
+
+**`lib/supabase/server.ts`（服务端）**
+- 使用 `createServerClient()` 创建
+- 用于 Server Components（默认就是服务端组件）、Route Handlers、Server Actions
+- 直接读写 Next.js cookie，自动处理 session 刷新
+- `cookies()` 在当前 Next.js 16 中是 async，已正确 `await`
+
+### .env.local 和 .env.example 的区别
+
+| 文件 | 是否提交 Git | 内容 |
+|------|-------------|------|
+| `.env.example` | ✅ 提交 | 仅包含变量名占位，不含真实值，供团队成员参考 |
+| `.env.local` | ❌ 不提交（已在 `.gitignore`） | 包含真实的 Project URL 和 anon key，仅本地使用 |
+
+### 为什么 NEXT_PUBLIC_SUPABASE_ANON_KEY 可以暴露给浏览器
+
+Supabase 的 **anon key** 是设计为公开的：
+- 它是一把"受限"的钥匙——只能执行 **受 RLS 策略约束** 的操作
+- 即使攻击者拿到 anon key，也只能在数据库中访问 RLS 允许的数据
+- 没有登录用户的 JWT 时，`auth.uid()` 返回 `null`，RLS 策略拒绝所有访问
+- 登录后，SDK 自动在请求中携带 JWT，数据库通过 `auth.uid() = user_id` 验证权限
+
+### 为什么 service_role key 绝对不能暴露
+
+Supabase 的 **service_role key** 拥有以下危险能力：
+- **绕过所有 RLS 策略**——可以读写任何用户的数据
+- **直接操作用户表** (`auth.users`)——可以删除任何用户
+- 这份 key 等同于数据库的 root 访问权限
+- **绝对不能** 以 `NEXT_PUBLIC_` 开头（会被打包进前端 JS bundle）
+- **绝对不能** 出现在客户端代码中
+
+> 本项目当前不使用、也不需要 service_role key。所有操作通过 RLS 策略在用户权限范围内执行。
+
+### Step 2：创建 Supabase client ✅（已合并到 Step 1）
+
+- 浏览器端 client：`lib/supabase/client.ts` ✅
+- 服务端 client：`lib/supabase/server.ts` ✅
+- 环境变量模板：`.env.example` ✅
+- Middleware（session 刷新）：待 Step 3 登录时再创建
+
 
 ### Step 3：登录页面
 
