@@ -2,8 +2,7 @@
  * 目标页 - 展示本地目标与行动，支持新增
  *
  * Milestone 2 Step 3: 本地优先，无数据 fallback mock。
- * 支持新增目标和行动（卡片内表单，可折叠）。
- * Milestone 2 Step 4: 表单校验、空状态优化、本地数据管理。
+ * Milestone 3 Step 4.1: 已登录时使用 Supabase 写入，未登录保留 localStorage。
  */
 
 "use client";
@@ -29,6 +28,8 @@ import {
   clearAllLocalData,
 } from "@/lib/local-storage";
 import { useGrowthLoopLocalData } from "@/hooks/use-growthloop-local-data";
+import { useGrowthLoopCloudData } from "@/hooks/use-growthloop-cloud-data";
+import { mapGoalToInsert, mapActionToInsert } from "@/lib/supabase/mappers";
 
 // ==================== 常量 ====================
 const USER_ID = "local-user-001";
@@ -54,7 +55,7 @@ const DIFFICULTY_OPTIONS: { value: ActionDifficulty; label: string }[] = [
 ];
 
 // ==================== 默认表单模板 ====================
-function emptyGoalForm(): {
+function emptyGoalForm(defaultDomainId?: string): {
   title: string;
   domainId: string;
   horizon: GoalHorizon;
@@ -63,14 +64,14 @@ function emptyGoalForm(): {
 } {
   return {
     title: "",
-    domainId: mockDomains[0]?.id ?? "",
+    domainId: defaultDomainId ?? mockDomains[0]?.id ?? "",
     horizon: "quarter",
     description: "",
     isMainFocus: false,
   };
 }
 
-function emptyActionForm(): {
+function emptyActionForm(defaultGoalId?: string): {
   title: string;
   goalId: string;
   standardVersion: string;
@@ -81,7 +82,7 @@ function emptyActionForm(): {
 } {
   return {
     title: "",
-    goalId: "",
+    goalId: defaultGoalId ?? "",
     standardVersion: "",
     minimumVersion: "",
     frequency: "daily",
@@ -144,14 +145,38 @@ export default function GoalsPage() {
     hasLocalActions,
   } = useGrowthLoopLocalData();
 
-  // --- 数据源：local 优先，fallback mock ---
-  // 如果用户已创建本地 goals 但没有本地 actions → 不用 mock actions
-  const allGoals: Goal[] = hasLocalGoals ? localGoals : mockGoals;
-  const allActions: Action[] = hasLocalActions
-    ? localActions
+  const {
+    goals: cloudGoals,
+    actions: cloudActions,
+    domains: cloudDomains,
+    isLoggedIn,
+    loading: cloudLoading,
+    refresh: cloudRefresh,
+    createGoal: cloudCreateGoal,
+    createAction: cloudCreateAction,
+  } = useGrowthLoopCloudData();
+
+  // --- 数据源策略 ---
+  // 已登录：仅 cloud 数据（不 fallback localStorage/mock）
+  // 未登录：localStorage → mock
+  const useCloud = isLoggedIn;
+
+  const allGoals: Goal[] = useCloud
+    ? cloudGoals
     : hasLocalGoals
-      ? []
-      : mockActions;
+      ? localGoals
+      : mockGoals;
+
+  const allActions: Action[] = useCloud
+    ? cloudActions
+    : hasLocalActions
+      ? localActions
+      : hasLocalGoals
+        ? []
+        : mockActions;
+
+  // domain 选择器数据源
+  const domainSource = useCloud && cloudDomains.length > 0 ? cloudDomains : mockDomains;
 
   // --- 表单折叠状态 ---
   const [showGoalForm, setShowGoalForm] = useState(false);
@@ -167,74 +192,162 @@ export default function GoalsPage() {
 
   // --- 保存提示 ---
   const [goalSaved, setGoalSaved] = useState(false);
-  const [goalSaveError, setGoalSaveError] = useState(false);
+  const [goalSaveError, setGoalSaveError] = useState<string | null>(null);
+  const [goalSaving, setGoalSaving] = useState(false);
   const [actionSaved, setActionSaved] = useState(false);
-  const [actionSaveError, setActionSaveError] = useState(false);
+  const [actionSaveError, setActionSaveError] = useState<string | null>(null);
+  const [actionSaving, setActionSaving] = useState(false);
 
   // --- 新增目标 ---
-  const handleSaveGoal = useCallback(() => {
+  const handleSaveGoal = useCallback(async () => {
     const errors = validateGoalForm(goalForm);
     setGoalErrors(errors);
 
     if (Object.keys(errors).length > 0) {
-      setGoalSaveError(true);
-      setTimeout(() => setGoalSaveError(false), 3000);
+      setGoalSaveError("请检查表单中的错误");
+      setTimeout(() => setGoalSaveError(null), 3000);
       return;
     }
 
-    const now = new Date().toISOString();
-    const newGoal: Goal = {
-      id: `goal-${Date.now()}`,
-      userId: USER_ID,
-      domainId: goalForm.domainId,
-      title: goalForm.title.trim(),
-      description: goalForm.description.trim() || undefined,
-      horizon: goalForm.horizon,
-      status: "active",
-      isMainFocus: goalForm.isMainFocus,
-      createdAt: now,
-      updatedAt: now,
-    };
-    upsertLocalGoal(newGoal);
-    setGoalForm(emptyGoalForm());
-    setGoalErrors({});
-    setGoalSaved(true);
-    setTimeout(() => setGoalSaved(false), 3000);
-  }, [goalForm]);
+    setGoalSaving(true);
+    setGoalSaveError(null);
+
+    try {
+      if (isLoggedIn) {
+        // 已登录：写入 Supabase
+        const now = new Date().toISOString();
+        const tempGoal: Goal = {
+          id: "", // Supabase 会生成 uuid
+          userId: "",
+          domainId: goalForm.domainId,
+          title: goalForm.title.trim(),
+          description: goalForm.description.trim() || undefined,
+          horizon: goalForm.horizon,
+          status: "active",
+          isMainFocus: goalForm.isMainFocus,
+          createdAt: now,
+          updatedAt: now,
+        };
+        const insert = mapGoalToInsert(tempGoal, ""); // user_id 由 createGoal 内部覆盖
+        await cloudCreateGoal(insert);
+        // 刷新云端数据
+        await cloudRefresh();
+
+        if (process.env.NODE_ENV === "development") {
+          console.log("[GrowthLoop Goals] Goal saved to Supabase");
+        }
+      } else {
+        // 未登录：写入 localStorage
+        const now = new Date().toISOString();
+        const newGoal: Goal = {
+          id: `goal-${Date.now()}`,
+          userId: USER_ID,
+          domainId: goalForm.domainId,
+          title: goalForm.title.trim(),
+          description: goalForm.description.trim() || undefined,
+          horizon: goalForm.horizon,
+          status: "active",
+          isMainFocus: goalForm.isMainFocus,
+          createdAt: now,
+          updatedAt: now,
+        };
+        upsertLocalGoal(newGoal);
+      }
+
+      setGoalForm(emptyGoalForm(domainSource[0]?.id));
+      setGoalErrors({});
+      setGoalSaved(true);
+      setTimeout(() => setGoalSaved(false), 3000);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "保存失败";
+      setGoalSaveError(msg);
+      setTimeout(() => setGoalSaveError(null), 5000);
+      if (process.env.NODE_ENV === "development") {
+        console.error("[GrowthLoop Goals] Failed to save goal:", msg);
+      }
+    } finally {
+      setGoalSaving(false);
+    }
+  }, [goalForm, isLoggedIn, cloudCreateGoal, cloudRefresh, domainSource]);
 
   // --- 新增行动 ---
-  const handleSaveAction = useCallback(() => {
+  const handleSaveAction = useCallback(async () => {
     const errors = validateActionForm(actionForm);
     setActionErrors(errors);
 
     if (Object.keys(errors).length > 0) {
-      setActionSaveError(true);
-      setTimeout(() => setActionSaveError(false), 3000);
+      setActionSaveError("请检查表单中的错误");
+      setTimeout(() => setActionSaveError(null), 3000);
       return;
     }
 
-    const now = new Date().toISOString();
-    const newAction: Action = {
-      id: `act-${Date.now()}`,
-      userId: USER_ID,
-      goalId: actionForm.goalId,
-      title: actionForm.title.trim(),
-      description: undefined,
-      standardVersion: actionForm.standardVersion.trim(),
-      minimumVersion: actionForm.minimumVersion.trim(),
-      frequency: actionForm.frequency,
-      difficulty: actionForm.difficulty,
-      isActive: true,
-      isWeeklyFocus: actionForm.isWeeklyFocus,
-      createdAt: now,
-      updatedAt: now,
-    };
-    upsertLocalAction(newAction);
-    setActionForm(emptyActionForm());
-    setActionErrors({});
-    setActionSaved(true);
-    setTimeout(() => setActionSaved(false), 3000);
-  }, [actionForm]);
+    setActionSaving(true);
+    setActionSaveError(null);
+
+    try {
+      if (isLoggedIn) {
+        // 已登录：写入 Supabase
+        const now = new Date().toISOString();
+        const tempAction: Action = {
+          id: "", // Supabase 会生成 uuid
+          userId: "",
+          goalId: actionForm.goalId,
+          title: actionForm.title.trim(),
+          description: undefined,
+          standardVersion: actionForm.standardVersion.trim(),
+          minimumVersion: actionForm.minimumVersion.trim(),
+          frequency: actionForm.frequency,
+          difficulty: actionForm.difficulty,
+          isActive: true,
+          isWeeklyFocus: actionForm.isWeeklyFocus,
+          createdAt: now,
+          updatedAt: now,
+        };
+        const insert = mapActionToInsert(tempAction, ""); // user_id 由 createAction 内部覆盖
+        await cloudCreateAction(insert);
+        // 刷新云端数据
+        await cloudRefresh();
+
+        if (process.env.NODE_ENV === "development") {
+          console.log("[GrowthLoop Goals] Action saved to Supabase");
+        }
+      } else {
+        // 未登录：写入 localStorage
+        const now = new Date().toISOString();
+        const newAction: Action = {
+          id: `act-${Date.now()}`,
+          userId: USER_ID,
+          goalId: actionForm.goalId,
+          title: actionForm.title.trim(),
+          description: undefined,
+          standardVersion: actionForm.standardVersion.trim(),
+          minimumVersion: actionForm.minimumVersion.trim(),
+          frequency: actionForm.frequency,
+          difficulty: actionForm.difficulty,
+          isActive: true,
+          isWeeklyFocus: actionForm.isWeeklyFocus,
+          createdAt: now,
+          updatedAt: now,
+        };
+        upsertLocalAction(newAction);
+      }
+
+      const firstGoalId = allGoals.filter((g) => g.status === "active")[0]?.id;
+      setActionForm(emptyActionForm(firstGoalId));
+      setActionErrors({});
+      setActionSaved(true);
+      setTimeout(() => setActionSaved(false), 3000);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "保存失败";
+      setActionSaveError(msg);
+      setTimeout(() => setActionSaveError(null), 5000);
+      if (process.env.NODE_ENV === "development") {
+        console.error("[GrowthLoop Goals] Failed to save action:", msg);
+      }
+    } finally {
+      setActionSaving(false);
+    }
+  }, [actionForm, isLoggedIn, cloudCreateAction, cloudRefresh, allGoals]);
 
   // ===== 本地数据管理 =====
   const [showDataManager, setShowDataManager] = useState(false);
@@ -283,7 +396,6 @@ export default function GoalsPage() {
       };
       reader.readAsText(file);
 
-      // 重置 input 以允许重复导入同一文件
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
       }
@@ -301,11 +413,10 @@ export default function GoalsPage() {
   }, [clearConfirm]);
 
   // --- 展示用派生数据 ---
-  // 本周主线目标
   const mainFocusGoal = allGoals.find((g) => g.isMainFocus);
 
-  // 按领域分组
-  const domainGroups = mockDomains
+  // 按领域分组（使用 domainSource）
+  const domainGroups = domainSource
     .sort((a, b) => a.sortOrder - b.sortOrder)
     .map((domain) => {
       const domainGoals = allGoals.filter((g) => g.domainId === domain.id);
@@ -322,19 +433,34 @@ export default function GoalsPage() {
       };
     });
 
-  // 是否有任何活跃目标
   const hasAnyGoal = allGoals.some((g) => g.status === "active");
 
   return (
     <div className="space-y-6">
       {/* ===== 页面标题 ===== */}
       <section>
-        <p className="text-xs text-zinc-500 dark:text-zinc-400">目标管理</p>
-        <h1 className="text-xl font-semibold mt-1">我的目标</h1>
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-xs text-zinc-500 dark:text-zinc-400">目标管理</p>
+            <h1 className="text-xl font-semibold mt-1">
+              我的目标
+              {useCloud && (
+                <span className="ml-2 text-xs font-normal text-emerald-600 dark:text-emerald-400">
+                  云端
+                </span>
+              )}
+            </h1>
+          </div>
+        </div>
+        {cloudLoading && useCloud && (
+          <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-1">
+            加载中...
+          </p>
+        )}
       </section>
 
       {/* ===== 空状态：全局 ===== */}
-      {!hasAnyGoal && (
+      {!hasAnyGoal && !cloudLoading && (
         <section className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-6 bg-white dark:bg-zinc-900 text-center">
           <p className="text-sm text-zinc-500 dark:text-zinc-400">
             还没有目标，先创建一个本周主线目标
@@ -472,6 +598,10 @@ export default function GoalsPage() {
         <button
           type="button"
           onClick={() => {
+            if (!showGoalForm) {
+              // 展开时，使用当前数据源中第一个 domain 的 ID 作为默认值
+              setGoalForm(emptyGoalForm(domainSource[0]?.id));
+            }
             setShowGoalForm((v) => !v);
             setShowActionForm(false);
           }}
@@ -530,7 +660,7 @@ export default function GoalsPage() {
                     : "border-zinc-200 dark:border-zinc-700"
                 }`}
               >
-                {mockDomains.map((d) => (
+                {domainSource.map((d) => (
                   <option key={d.id} value={d.id}>
                     {d.name}
                   </option>
@@ -599,9 +729,10 @@ export default function GoalsPage() {
             <button
               type="button"
               onClick={handleSaveGoal}
-              className="w-full rounded-lg bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-500 dark:hover:bg-emerald-600 text-white font-medium py-2 text-sm transition"
+              disabled={goalSaving}
+              className="w-full rounded-lg bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-500 dark:hover:bg-emerald-600 text-white font-medium py-2 text-sm transition disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              保存目标
+              {goalSaving ? "保存中..." : "保存目标"}
             </button>
             {goalSaved && (
               <p className="text-center text-xs text-emerald-600 dark:text-emerald-400">
@@ -610,7 +741,7 @@ export default function GoalsPage() {
             )}
             {goalSaveError && (
               <p className="text-center text-xs text-red-500 dark:text-red-400">
-                请检查表单中的错误
+                {goalSaveError}
               </p>
             )}
           </div>
@@ -622,6 +753,11 @@ export default function GoalsPage() {
         <button
           type="button"
           onClick={() => {
+            if (!showActionForm) {
+              // 展开时，使用当前数据源中第一个 goal 的 ID 作为默认值
+              const firstGoalId = allGoals.filter((g) => g.status === "active")[0]?.id;
+              setActionForm(emptyActionForm(firstGoalId));
+            }
             setShowActionForm((v) => !v);
             setShowGoalForm(false);
           }}
@@ -835,9 +971,10 @@ export default function GoalsPage() {
             <button
               type="button"
               onClick={handleSaveAction}
-              className="w-full rounded-lg bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-500 dark:hover:bg-emerald-600 text-white font-medium py-2 text-sm transition"
+              disabled={actionSaving}
+              className="w-full rounded-lg bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-500 dark:hover:bg-emerald-600 text-white font-medium py-2 text-sm transition disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              保存行动
+              {actionSaving ? "保存中..." : "保存行动"}
             </button>
             {actionSaved && (
               <p className="text-center text-xs text-emerald-600 dark:text-emerald-400">
@@ -846,7 +983,7 @@ export default function GoalsPage() {
             )}
             {actionSaveError && (
               <p className="text-center text-xs text-red-500 dark:text-red-400">
-                请检查表单中的错误
+                {actionSaveError}
               </p>
             )}
           </div>

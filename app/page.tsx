@@ -14,6 +14,7 @@ import {
   getRecentDailyLogs,
 } from "@/lib/stats";
 import { useGrowthLoopLocalData } from "@/hooks/use-growthloop-local-data";
+import { useGrowthLoopCloudData } from "@/hooks/use-growthloop-cloud-data";
 import type { Action, Goal } from "@/types";
 
 export default function HomePage() {
@@ -24,11 +25,36 @@ export default function HomePage() {
     goals: localGoals,
   } = useGrowthLoopLocalData();
 
-  // 优先 localStorage，无数据 fallback mock
-  const logs = localDailyLogs.length > 0 ? localDailyLogs : mockDailyLogs;
-  const records = localActionRecords.length > 0 ? localActionRecords : mockActionRecords;
-  const actionSource: Action[] = localActions.length > 0 ? localActions : mockActions;
-  const goalSource: Goal[] = localGoals.length > 0 ? localGoals : mockGoals;
+  // 从云端获取数据（Cloud-First）
+  const {
+    goals: cloudGoals,
+    actions: cloudActions,
+    isLoggedIn,
+  } = useGrowthLoopCloudData();
+
+  // 数据源策略：
+  // 已登录 → 仅 cloud 数据（即使为空也不 fallback localStorage/mock）
+  // 未登录 → localStorage → mock
+  const logs = isLoggedIn
+    ? []
+    : localDailyLogs.length > 0
+      ? localDailyLogs
+      : mockDailyLogs;
+  const records = isLoggedIn
+    ? []
+    : localActionRecords.length > 0
+      ? localActionRecords
+      : mockActionRecords;
+  const actionSource: Action[] = isLoggedIn
+    ? cloudActions
+    : localActions.length > 0
+      ? localActions
+      : mockActions;
+  const goalSource: Goal[] = isLoggedIn
+    ? cloudGoals
+    : localGoals.length > 0
+      ? localGoals
+      : mockGoals;
 
   const todayActions = getTodayActions(actionSource, records);
   const weekRate = getWeekCompletionRate(records);

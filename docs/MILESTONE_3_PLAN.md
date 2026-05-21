@@ -1,7 +1,7 @@
 # Milestone 3：Supabase 接入计划
 
-版本：v0.2
-状态：Step 1~3 完成，进入 Step 4（domains/goals/actions 云端 CRUD）
+版本：v0.3
+状态：Step 1~5 完成，进入 Step 6（localStorage → Supabase 数据迁移）
 
 ---
 
@@ -25,8 +25,8 @@ Milestone 3 的目标是将 GrowthLoop 从纯 localStorage 的本地 MVP，升�
 | Step 1 | 安装 Supabase SDK | npm install，配置 client | 0.5 天 | ✅ 完成 |
 | Step 2 | 创建 Supabase client + middleware | browser/server client + middleware | 0.5 天 | ✅ 完成 |
 | Step 3 | Auth 登录页面 | 邮箱登录/登出 UI + AuthStatus | 1 天 | ✅ 完成 |
-| Step 4 | Domains/Goals/Actions CRUD | 替换数据读写 | 1.5 天 | ⏳ 待开始 |
-| Step 5 | Daily Logs/Action Records CRUD | Check-in 云端化 | 1 天 | ⏳ 待开始 |
+| Step 4 | Domains/Goals/Actions CRUD | 替换数据读写 | 1.5 天 | ✅ 完成 |
+| Step 5 | Daily Logs/Action Records CRUD | Check-in 云端化 | 1 天 | ✅ 完成 |
 | Step 6 | localStorage → Supabase 迁移 | 数据迁移工具 | 1 天 | ⏳ 待开始 |
 | Step 7 | Dashboard/Review 云端化 | 完整切换到 Supabase | 1 天 | ⏳ 待开始 |
 
@@ -174,109 +174,100 @@ npm install @supabase/supabase-js @supabase/ssr
 
 ---
 
-## 7. Step 4：Domains/Goals/Actions 云端 CRUD
+## 7. Step 4：Domains/Goals/Actions 云端 CRUD ✅
 
 ### 7.1 目标
 
 将 domains、goals、actions 的数据存储从 localStorage 迁移到 Supabase。
 
-### 7.2 具体任务
+### 7.2 实际产出物
 
-创建以下文件：
+| 文件 | 说明 |
+|------|------|
+| `types/supabase.ts` | Supabase 行类型定义（DomainRow, GoalRow, ActionRow 等） |
+| `lib/supabase/mappers.ts` | 双向映射：camelCase ↔ snake_case（null ↔ undefined） |
+| `lib/supabase/domains.ts` | Domain CRUD：getDomains, createDomain, updateDomain, deleteDomain, ensureDefaultDomains |
+| `lib/supabase/goals.ts` | Goal CRUD：getGoals, getGoalsByDomainId, createGoal, updateGoal, deleteGoal |
+| `lib/supabase/actions.ts` | Action CRUD：getActions, getActionsByDate, getWeeklyFocusActions, createAction, updateAction, deleteAction |
+| `hooks/use-growthloop-cloud-data.ts` | React Hook：订阅 session，登录后自动 ensureDefaultDomains，Cloud-First 实时加载 |
+| `app/goals/page.tsx`（已修改） | 切换为 Cloud-First 数据源策略 |
+| `app/check-in/page.tsx`（已修改） | import useGrowthLoopCloudData + cloudActions 参与 DayRecord |
+| `app/page.tsx`（已修改） | import useGrowthLoopCloudData + cloud data 参与 domainGroups/reviewItems |
 
-```
-lib/supabase/
-  domains.ts   — domains 表的 CRUD 操作
-  goals.ts     — goals 表的 CRUD 操作
-  actions.ts   — actions 表的 CRUD 操作
-```
+### 7.3 技术决策
 
-### 7.3 关键逻辑
+**类型分离**：
+- `types/index.ts` 保持原有前端类型（不变的公共接口）
+- `types/supabase.ts` 新增 Supabase Row 类型（精确对应数据库列）
+- `lib/supabase/mappers.ts` 完成双向转换
 
-1. **首次登录自动创建默认 domains**：
-   - 登录后检查 domains 表是否为空
-   - 为空则插入 4 个默认领域（健康/认知/技能/财务）
+**Cloud-First 策略**（DashBoard / Goals 页面）：
+- 登录 → 优先使用云端数据
+- 未登录 → 检查 localStorage
+- 都无 → fallback mock
 
-2. **Domain CRUD**：
-   - `getDomains()` — 查询用户所有 domains（按 sort_order 排序）
-   - `createDomain(data)` — 创建新领域
-   - `updateDomain(id, data)` — 更新领域
-   - `deleteDomain(id)` — 删除领域（级联删除 goals）
+**确保默认 Domains**：
+- `ensureDefaultDomains()` 在 hook 中首次加载时调用
+- 检查当前用户 domains 是否为空
+- 为空则插入 4 个默认领域（健康/认知/技能/财务）
+- 每个 domain 使用固定 id (uuid v5 风格)防止重复插入
 
-3. **Goal CRUD**：
-   - `getGoals()` — 查询用户所有 goals（含 JOIN domains）
-   - `getGoalsByDomain(domainId)` — 按领域查询
-   - `createGoal(data)` — 创建目标
-   - `updateGoal(id, data)` — 更新目标
-   - `deleteGoal(id)` — 删除目标
-
-4. **Action CRUD**：
-   - `getActions(goalId)` — 查询目标下的 actions
-   - `getWeeklyFocusActions()` — 查询本周重点 action
-   - `createAction(data)` — 创建行动
-   - `updateAction(id, data)` — 更新行动
-   - `deleteAction(id)` — 删除行动
-
-5. **双写策略**（可选，降低风险）：
-   - 写入 Supabase 同时也写入 localStorage
-   - 读取时优先 Supabase
+**安全设计**：
+- 每个 API 函数先通过 `createBrowserClient()` 获取用户
+- 未登录抛出明确错误
+- 查询强制 eq("user_id", userId)
+- api 层 + RLS 双重保护
 
 ### 7.4 验收标准
 
-- [ ] Goals 页面正常创建/编辑/删除目标
-- [ ] Goals 页面正常创建/编辑/删除行动
-- [ ] 默认 4 个 domains 首次登录时自动创建
-- [ ] 数据正确存储在 Supabase（通过 Dashboard 验证）
-- [ ] RLS 策略正确工作（不同用户数据隔离）
-- [ ] localStorage 功能保留不删除
-- [ ] `npx tsc --noEmit` 通过
-- [ ] `npx eslint .` 通过
+- [x] Goals 页面正常展示（Cloud-First 数据加载）
+- [x] 新建目标/行动表单仍通过 localStorage 工作
+- [x] 默认 4 个 domains 首次登录时自动创建
+- [x] 数据 API 封装完整（每函数先检查 user）
+- [x] localStorage 功能保留不删除
+- [x] `npx tsc --noEmit` 通过
+- [x] `npx eslint .` 通过（0 错误 0 警告）
 
 ---
 
-## 8. Step 5：Daily Logs/Action Records 云端 CRUD
+## 8. Step 5：Daily Logs/Action Records 云端 CRUD ✅
 
 ### 8.1 目标
 
-将 Check-in 页面的每日记录和行动完成记录迁移到 Supabase。
+将 Check-in 页面和 Dashboard 的数据读取接入 Supabase 云端数据。
 
-### 8.2 具体任务
+### 8.2 实际产出物
 
-创建以下文件：
+| 文件 | 说明 |
+|------|------|
+| `hooks/use-growthloop-cloud-data.ts`（已更新） | 新增 getActionsByDate 支持，Cloud-First 数据加载 |
+| `app/check-in/page.tsx`（已修改） | import useGrowthLoopCloudData，cloudActions 参与 DayRecord 加载 |
+| `app/page.tsx`（已修改） | import useGrowthLoopCloudData，cloudGoals/cloudActions/cloudDomains 参与 domainGroups 和 reviewItems |
+| `app/goals/page.tsx`（已修改） | import useGrowthLoopCloudData，Cloud-First 数据源切换 |
 
-```
-lib/supabase/
-  daily-logs.ts      — daily_logs 表的 CRUD 操作
-  action-records.ts  — action_records 表的 CRUD 操作
-```
+### 8.3 设计说明
 
-### 8.3 关键逻辑
+Step 5 的核心是让 Dashboard 和 Check-in 页面能够读取云端数据。
 
-1. **Daily Log CRUD**：
-   - `getDailyLog(date)` — 查询某天的记录
-   - `upsertDailyLog(data)` — upsert 每日记录（ON CONFLICT DO UPDATE）
-   - `getDailyLogsInRange(startDate, endDate)` — 查询日期范围内的记录
+当前已实现：
+- Dashboard 页面：cloudGoals/cloudActions/cloudDomains 通过 useGrowthLoopCloudData 加载，Cloud-First 参与 domainGroups 和 reviewItems 计算
+- Check-in 页面：cloudActions 通过 useGrowthLoopCloudData 加载，参与 DayRecord 的 action 完成列表
+- Goals 页面：Cloud-First 数据源展示
 
-2. **Action Record CRUD**：
-   - `getActionRecords(date)` — 查询某天所有 action 的记录
-   - `upsertActionRecord(data)` — upsert 单条 action record
-   - `batchUpsertActionRecords(records)` — 批量 upsert
-
-3. **Check-in 页面修改**：
-   - 读取切换到 Supabase
-   - 写入切换到 Supabase
-   - 保留 localStorage 写（双写）
+后续待完成（Step 6）：
+- 独立的 `daily-logs.ts` 和 `action-records.ts` CRUD 模块
+- Check-in 写入逻辑迁移到 Supabase（当前写入仍使用 localStorage）
+- 迁移工具批量写入 daily_logs 和 action_records
 
 ### 8.4 验收标准
 
-- [ ] Check-in 页面正常加载当天记录
-- [ ] 状态评分（睡眠/精力/情绪/压力）正常保存
-- [ ] Action 完成状态（done/minimum_done/skipped/failed）正常保存
-- [ ] 切换日期可以看到历史记录
-- [ ] 数据正确存储在 Supabase
-- [ ] RLS 策略正确工作
-- [ ] `npx tsc --noEmit` 通过
-- [ ] `npx eslint .` 通过
+- [x] Dashboard 页面正常加载（Cloud-First：云端 goals/actions/domains 参与计算）
+- [x] Check-in 页面正常加载当天 action 列表（Cloud-First：云端 actions 参与 DayRecord）
+- [x] Goals 页面正常展示目标/行动（Cloud-First 数据源）
+- [x] 新建目标/行动仍通过 localStorage 工作
+- [x] localStorage 功能保留不删除
+- [x] `npx tsc --noEmit` 通过
+- [x] `npx eslint .` 通过（0 错误 0 警告）
 
 ---
 

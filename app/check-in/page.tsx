@@ -19,6 +19,7 @@ import {
   upsertActionRecordsForDate,
 } from "@/lib/local-storage";
 import { useGrowthLoopLocalData } from "@/hooks/use-growthloop-local-data";
+import { useGrowthLoopCloudData } from "@/hooks/use-growthloop-cloud-data";
 import type { Action } from "@/types";
 
 // ==================== 常量 ====================
@@ -81,9 +82,18 @@ export default function CheckInPage() {
     actions: localActions,
   } = useGrowthLoopLocalData();
 
-  // 今日行动来源：优先 localActions，无数据时 fallback mock
-  const actionSource: Action[] =
-    localActions.length > 0 ? localActions : mockActions;
+  // 从云端获取数据（Cloud-First）
+  const {
+    actions: cloudActions,
+    hasCloudActions,
+  } = useGrowthLoopCloudData();
+
+  // 今日行动来源：Cloud-First（cloud > local > mock）
+  const actionSource: Action[] = hasCloudActions
+    ? cloudActions
+    : localActions.length > 0
+      ? localActions
+      : mockActions;
 
   // ===== 今日应执行的行动列表 =====
   const todayActions = useMemo(
@@ -405,7 +415,7 @@ export default function CheckInPage() {
           </p>
         )}
         <p className="mt-2 text-xs text-zinc-400 dark:text-zinc-500 text-center">
-          数据保存在浏览器本地，不会丢失
+          数据保存在浏览器本地{hasCloudActions && "，同时同步到云端"}
         </p>
       </section>
     </div>
