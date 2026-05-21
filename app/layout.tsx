@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { BottomNav } from "./components/BottomNav";
+import { AuthStatus } from "./components/auth/AuthStatus";
 
 // ===== Google Fonts 配置 =====
 const geistSans = Geist({
@@ -50,10 +51,11 @@ export default function RootLayout({
       <body className="flex flex-col min-h-dvh bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100">
         {/* ===== 顶部导航栏 ===== */}
         <header className="shrink-0 border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900">
-          <div className="max-w-lg mx-auto px-4 h-12 flex items-center">
+          <div className="max-w-lg mx-auto px-4 h-12 flex items-center justify-between">
             <span className="text-sm font-semibold tracking-wide text-zinc-900 dark:text-zinc-100">
               GrowthLoop
             </span>
+            <AuthStatus />
           </div>
         </header>
 

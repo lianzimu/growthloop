@@ -199,16 +199,82 @@ Supabase 的 **service_role key** 拥有以下危险能力：
 - 浏览器端 client：`lib/supabase/client.ts` ✅
 - 服务端 client：`lib/supabase/server.ts` ✅
 - 环境变量模板：`.env.example` ✅
-- Middleware（session 刷新）：待 Step 3 登录时再创建
+- Middleware（session 刷新）：✅ 已创建 `middleware.ts`
 
+### Step 3：Auth 登录 ✅（当前阶段完成）
 
-### Step 3：登录页面
+已创建/修改的文件：
 
-- 创建 `app/auth/page.tsx` 登录页面
-- 创建 `app/auth/callback/route.ts` OAuth 回调
-- 创建 `lib/auth.ts` Auth 工具函数
-- 实现邮箱登录 UI
-- 实现登录/登出状态管理
+| 文件 | 用途 |
+|------|------|
+| `middleware.ts` | Session 自动刷新中间件（排除静态资源） |
+| `app/login/page.tsx` | 登录/注册页面（邮箱+密码，极简风格） |
+| `app/components/auth/AuthStatus.tsx` | 登录状态指示器（显示邮箱 + 退出按钮） |
+| `app/layout.tsx` | Header 中嵌入 AuthStatus（极小改动） |
+
+### 如何在 Supabase 控制台开启 Email/Password Auth
+
+1. 进入 Supabase Dashboard → 选择项目
+2. 左侧菜单 → **Authentication** → **Providers**
+3. 确保 **Email** provider 已启用（默认开启）
+4. 如果不想启用邮箱确认（开发阶段）：
+   - 左侧菜单 → **Authentication** → **Settings**
+   - 在 **Email Auth** 区域
+   - 关闭 **Confirm email**（或保留开启以测试完整流程）
+
+### 开发阶段是否需要关闭 email confirmation
+
+| 场景 | 建议 |
+|------|------|
+| 纯本地开发、测试 Auth 流程 | 关闭 Confirm email，注册后即可直接登录 |
+| 验证完整注册流程 | 保留 Confirm email 开启，注册后检查收件箱 |
+| 生产环境 | 建议开启 Confirm email，防止垃圾注册 |
+
+`app/login/page.tsx` 已内置提示：注册成功后会提示用户检查邮箱。
+
+### ⚠️ 重要：URL 格式
+
+`NEXT_PUBLIC_SUPABASE_URL` 必须是 **Project URL**（不带路径）：
+
+```
+✅ 正确：https://<project-id>.supabase.co
+❌ 错误：https://<project-id>.supabase.co/rest/v1/
+```
+
+SDK 会自动拼接 API 路径，手动添加 `/rest/v1/` 会导致请求失败。
+
+### 如何测试注册
+
+1. 访问 `http://localhost:3000/login`
+2. 点击"没有账号？去注册"
+3. 输入邮箱和密码（至少 6 位）
+4. 点击"注册"
+5. 看到绿色提示"注册成功！"
+6. 如 Supabase 开启了邮箱确认：去邮箱收件箱点击确认链接
+7. 如未开启邮箱确认：切换到"已有账号？去登录"，直接登录
+
+### 如何测试登录
+
+1. 访问 `http://localhost:3000/login`
+2. 输入已注册的邮箱和密码
+3. 点击"登录"
+4. 成功后自动跳转到首页 `/`
+5. Header 右侧显示用户邮箱 + "退出"按钮
+
+### 如何测试退出
+
+1. 在已登录状态下，点击 Header 右侧的"退出"
+2. 自动跳转到 `/login`
+3. Header 右侧恢复为"登录"链接
+4. 刷新页面后 session 已清除
+
+### 当前阶段不影响 localStorage MVP
+
+- 所有现有页面（Dashboard、Check-in、Goals、Review、Coach）的 localStorage 逻辑完整保留
+- 未登录用户仍可正常使用所有本地功能
+- 登录状态仅显示在 Header 中，不拦截任何页面
+- 后续 Step 4 接云端 CRUD 时，再决定哪些页面需要登录保护
+
 
 ### Step 4：domains/goals/actions 云端 CRUD
 

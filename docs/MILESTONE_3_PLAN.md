@@ -1,7 +1,7 @@
 # Milestone 3：Supabase 接入计划
 
-版本：v0.1
-状态：Step 0 文档与 SQL 完成，待进入 Step 1
+版本：v0.2
+状态：Step 1~3 完成，进入 Step 4（domains/goals/actions 云端 CRUD）
 
 ---
 
@@ -22,9 +22,9 @@ Milestone 3 的目标是将 GrowthLoop 从纯 localStorage 的本地 MVP，升�
 | Step | 名称 | 内容 | 预估工作量 | 状态 |
 |------|------|------|------------|------|
 | Step 0 | 数据库与文档准备 | DDL、RLS、Seed、文档 | 1 天 | ✅ 完成 |
-| Step 1 | 安装 Supabase SDK | npm install，配置 client | 0.5 天 | ⏳ 待开始 |
-| Step 2 | 创建 Supabase client | browser/server client | 0.5 天 | ⏳ 待开始 |
-| Step 3 | Auth 登录页面 | 邮箱登录/登出 UI | 1 天 | ⏳ 待开始 |
+| Step 1 | 安装 Supabase SDK | npm install，配置 client | 0.5 天 | ✅ 完成 |
+| Step 2 | 创建 Supabase client + middleware | browser/server client + middleware | 0.5 天 | ✅ 完成 |
+| Step 3 | Auth 登录页面 | 邮箱登录/登出 UI + AuthStatus | 1 天 | ✅ 完成 |
 | Step 4 | Domains/Goals/Actions CRUD | 替换数据读写 | 1.5 天 | ⏳ 待开始 |
 | Step 5 | Daily Logs/Action Records CRUD | Check-in 云端化 | 1 天 | ⏳ 待开始 |
 | Step 6 | localStorage → Supabase 迁移 | 数据迁移工具 | 1 天 | ⏳ 待开始 |
@@ -61,138 +61,116 @@ Milestone 3 的目标是将 GrowthLoop 从纯 localStorage 的本地 MVP，升�
 
 ---
 
-## 4. Step 1：安装 Supabase SDK
+## 4. Step 1：安装 Supabase SDK ✅
 
 ### 4.1 目标
 
 安装官方 Supabase SDK，为后续接入做准备。
 
-### 4.2 具体任务
+### 4.2 产出物
 
 ```bash
 npm install @supabase/supabase-js @supabase/ssr
 ```
 
+已安装版本：
+- `@supabase/supabase-js`: ^2.106.0 ✅
+- `@supabase/ssr`: ^0.10.3 ✅
+
 ### 4.3 验收标准
 
-- [ ] `@supabase/supabase-js` 安装成功，版本 ≥ 2.0
-- [ ] `@supabase/ssr` 安装成功
-- [ ] `package.json` 正确记录了依赖
-- [ ] `npx tsc --noEmit` 通过
-- [ ] `npx eslint .` 通过
-- [ ] 页面功能无变化
+- [x] `@supabase/supabase-js` 安装成功，版本 ≥ 2.0
+- [x] `@supabase/ssr` 安装成功
+- [x] `package.json` 正确记录了依赖
+- [x] `npx tsc --noEmit` 通过
+- [x] `npx eslint .` 通过
+- [x] 页面功能无变化
 
 ---
 
-## 5. Step 2：创建 Supabase Client
+## 5. Step 2：创建 Supabase Client ✅
 
 ### 5.1 目标
 
 创建可在浏览器端和服务端使用的 Supabase client。
 
-### 5.2 具体任务
+### 5.2 产出物
 
-创建以下文件：
+| 文件 | 用途 |
+|------|------|
+| `lib/supabase/client.ts` | 浏览器端 client（`createBrowserClient`），供 `"use client"` 组件使用 |
+| `lib/supabase/server.ts` | 服务端 client（`createServerClient`），供 Server Components / Route Handlers 使用 |
+| `middleware.ts` | Session 自动刷新中间件，读取/写回 cookie，排除静态资源 |
+| `.env.example` | 环境变量模板（仅占位，可提交 Git） |
 
-```
-lib/supabase/
-  client.ts       — 浏览器端 client（客户端组件使用）
-  server.ts       — 服务端 client（Server Components / Route Handlers）
-  middleware.ts   — Next.js 中间件（Session 刷新）
-```
+### 5.3 技术决策：middleware.ts vs proxy.ts
 
-### 5.3 关键代码
-
-**lib/supabase/client.ts**:
-```ts
-import { createBrowserClient } from '@supabase/ssr'
-
-export function createClient() {
-  return createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
-}
-```
-
-**lib/supabase/server.ts**:
-```ts
-import { createServerClient } from '@supabase/ssr'
-import { cookies } from 'next/headers'
-
-export async function createClient() {
-  const cookieStore = await cookies()
-  return createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return cookieStore.getAll()
-        },
-        setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value, options }) =>
-            cookieStore.set(name, value, options)
-          )
-        },
-      },
-    }
-  )
-}
-```
+选择 **middleware.ts**。原因：
+- Next.js 16 + `@supabase/ssr` 0.10.x 官方推荐 middleware 方式
+- `proxy.ts` 是早期实验性方案，已废弃
+- middleware 处理 session cookie 刷新是业界标准做法
+- matcher 配置精确排除静态资源（`_next/static`、`_next/image`、图片文件等）
 
 ### 5.4 验收标准
 
-- [ ] `lib/supabase/client.ts` 创建完成
-- [ ] `lib/supabase/server.ts` 创建完成
-- [ ] `lib/supabase/middleware.ts` 创建完成（如需要）
-- [ ] Client 可正常初始化（测试页面 `console.log` 验证）
-- [ ] 不影响现有 localStorage 功能
-- [ ] `npx tsc --noEmit` 通过
-- [ ] `npx eslint .` 通过
+- [x] `lib/supabase/client.ts` 创建完成
+- [x] `lib/supabase/server.ts` 创建完成
+- [x] `middleware.ts` 创建完成（session 刷新 + matcher 排除静态资源）
+- [x] `.env.example` 创建完成
+- [x] 不影响现有 localStorage 功能
+- [x] `npx tsc --noEmit` 通过
+- [x] `npx eslint .` 通过
 
 ---
 
-## 6. Step 3：Auth 登录页面
+## 6. Step 3：Auth 登录页面 ✅
 
 ### 6.1 目标
 
 实现用户认证流程，包括登录页面和 session 管理。
 
-### 6.2 具体任务
+### 6.2 产出物
 
-1. 创建 `app/auth/page.tsx` — 登录页面
-   - 邮箱输入框
-   - 密码输入框
-   - "登录"按钮
-   - "注册"按钮
-   - 成功/错误 toast 提示
+| 文件 | 用途 |
+|------|------|
+| `app/login/page.tsx` | 登录/注册页面（邮箱+密码），登录/注册模式切换，错误/成功提示 |
+| `app/components/auth/AuthStatus.tsx` | Auth 状态指示器：未登录显示"登录"链接，已登录显示邮箱 + "退出"按钮 |
+| `app/layout.tsx`（已修改） | Header 中嵌入 AuthStatus 组件 |
 
-2. 创建 `app/auth/callback/route.ts` — OAuth 回调（邮箱确认用）
+### 6.3 技术决策
 
-3. 创建 `lib/auth.ts` — Auth 工具函数
-   - `signUp(email, password)` — 注册
-   - `signIn(email, password)` — 登录
-   - `signOut()` — 登出
-   - `getSession()` — 获取当前 session
-   - `getUser()` — 获取当前用户
+**登录页路径**：使用 `/login` 而非 `/auth`。原因：
+- 路径更短，更直观
+- `/auth` 通常用作 Supabase OAuth callback 的父路径
+- 避免与未来可能的 `/auth/callback` route handler 冲突
 
-4. 修改 `app/layout.tsx`
-   - 检测登录状态
-   - 未登录时重定向到 `/auth`
+**不做强制路由保护**：当前阶段不强制未登录跳转。原因：
+- localStorage MVP 功能仍需要工作
+- 用户可以选择不登录、继续使用本地功能
+- AuthStatus 轻量嵌入 header，不侵入页面
+- 后续 Step 4 接入云端 CRUD 时再决定哪些页面需要登录保护
 
-5. 在 TopNav 或 Dashboard 添加登出按钮
+**不使用 `lib/auth.ts` 工具函数**：当前阶段 auth 逻辑直接在 page.tsx 和 AuthStatus 组件中内联：
+- `signUp` / `signInWithPassword` / `signOut` 直接调用 supabase client
+- `getUser` / `onAuthStateChange` 直接在 AuthStatus 中调用
+- 减少抽象层，保持代码简洁
+- 后续如需复用再提取
 
-### 6.3 验收标准
+**不创建 OAuth callback route**：当前阶段仅支持邮箱密码登录。OAuth（Google/GitHub）和邮箱确认回调可在后续按需添加。
 
-- [ ] 用户可以注册新账号
-- [ ] 用户可以登录已有账号
-- [ ] 登录失败时显示错误提示
-- [ ] 登录成功后跳转到 Dashboard
-- [ ] 未登录用户访问页面时重定向到登录页
-- [ ] 登出功能正常
-- [ ] Session 持久化（刷新页面不需要重新登录）
-- [ ] localStorage 功能不受影响（已登录用户继续使用 localStorage 数据）
+### 6.4 验收标准
+
+- [x] 用户可以注册新账号
+- [x] 用户可以登录已有账号
+- [x] 登录失败时显示错误提示（红色提示框 + Supabase 错误消息）
+- [x] 注册成功时显示成功提示（绿色提示框 + 邮件确认提醒）
+- [x] 登录成功后跳转到首页 `/`
+- [x] **不强制未登录用户跳转**（localStorage MVP 仍可用）
+- [x] 登出功能正常（Header "退出"按钮 → 跳转 `/login`）
+- [x] Session 持久化（middleware.ts 自动刷新 session）
+- [x] localStorage 功能不受影响
+- [x] `npx tsc --noEmit` 通过
+- [x] `npx eslint .` 通过
 
 ---
 
