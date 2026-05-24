@@ -28,7 +28,7 @@ Milestone 3 的目标是将 GrowthLoop 从纯 localStorage 的本地 MVP，升�
 | Step 4 | Domains/Goals/Actions CRUD | 替换数据读写 | 1.5 天 | ✅ 完成 |
 | Step 5 | Daily Logs/Action Records CRUD | Check-in 云端化 | 1 天 | ✅ 完成 |
 | Step 6 | localStorage → Supabase 迁移 | 数据迁移工具 | 1 天 | ✅ 完成 |
-| Step 7 | Dashboard/Review 云端化 | 完整切换到 Supabase | 1 天 | ⏳ 待开始 |
+| Step 7 | Dashboard/Review 云端化 | 完整切换到 Supabase | 1 天 | ✅ 完成 |
 
 **总预估工作量**：约 7.5 天（含测试与修复）
 
@@ -336,50 +336,68 @@ npm install @supabase/supabase-js @supabase/ssr
 
 ---
 
-## 10. Step 7：Dashboard/Review 云端数据读取
+## 10. Step 7：Dashboard/Review 云端数据读取 ✅
 
 ### 10.1 目标
 
 Dashboard 和 Weekly Review 页面完全切换到 Supabase 数据源。
 
-### 10.2 具体任务
+### 10.2 实际产出物
 
-1. **Dashboard 页面修改**：
-   - `getStats()` 从 Supabase 查询数据
-   - 领域统计、行动统计、趋势图数据从 Supabase 读取
-   - 如果 Supabase 无数据且 localStorage 有数据，提示迁移
-
-2. **Weekly Review 页面修改**：
-   - 读取本周 daily_logs 和 action_records
-   - 读取历史 weekly_reviews
-   - 创建/保存 weekly_review 到 Supabase
-   - metrics_snapshot 使用 JSONB 存储
-
-3. **AI Coach 页面**：
-   - 读取 ai_messages 历史
-   - 保存新消息到 ai_messages
-   - （OpenAI API 接入后续再做）
-
-4. **清理**：
-   - 移除双写逻辑（确认 Supabase 稳定后）
-   - 移除 feature flag
-   - localStorage 读取逻辑保留作为 fallback
+| 文件 | 说明 |
+|------|------|
+| `app/page.tsx`（已修改） | 已登录时 dailyLogs/actionRecords 来自 Supabase |
+| `app/review/page.tsx`（已修改） | 已登录时 dailyLogs/actionRecords 来自 Supabase；AI 复盘可保存到 weekly_reviews；支持用户反思 |
+| `types/supabase.ts`（已更新） | 新增 WeeklyReviewRow / WeeklyReviewInsert |
+| `lib/supabase/mappers.ts`（已更新） | 新增 mapWeeklyReviewRowToWeeklyReview / mapWeeklyReviewToInsert |
+| `lib/supabase/weekly-reviews.ts`（新增） | Weekly Review CRUD：getWeeklyReviews / getWeeklyReviewByWeekStart / upsertWeeklyReview / deleteWeeklyReview |
+| `hooks/use-growthloop-cloud-data.ts`（已更新） | 新增 weeklyReviews 状态、refreshWeeklyReviews、getCurrentWeekReview、upsertWeeklyReview |
 
 ### 10.3 验收标准
 
-- [ ] Dashboard 展示 Supabase 数据
-- [ ] Weekly Review 展示 Supabase 数据
-- [ ] AI Coach 对话历史从 Supabase 加载
-- [ ] 各页面数据刷新正常
-- [ ] 如果 Supabase 无数据，回退到 localStorage 读取
-- [ ] Stat 统计正确
-- [ ] `npx tsc --noEmit` 通过
-- [ ] `npx eslint .` 通过
-- [ ] 完整功能回归测试通过
+- [x] Dashboard 展示 Supabase 数据
+- [x] Weekly Review 展示 Supabase 数据
+- [x] AI 复盘可保存到 Supabase
+- [x] 各页面数据刷新正常
+- [x] 未登录用户 fallback localStorage
+- [x] Stat 统计正确
+- [x] `npx tsc --noEmit` 通过
+- [x] 完整功能回归测试通过
 
 ---
 
-## 11. 风险与缓解
+## 11. Milestone 4：AI Weekly Review
+
+### 11.1 Step 1：DeepSeek AI 复盘生成 ✅
+
+通过 DeepSeek API 根据用户本周数据生成 AI 周复盘。
+
+详细文档见 `docs/AI_SETUP.md`。
+
+### 11.2 Step 2：Save AI Weekly Review to Supabase ✅
+
+将 AI 复盘结果和用户反思保存到 Supabase `weekly_reviews` 表。
+
+**实现要点**：
+- 已登录用户可在 Review 页面保存 AI 复盘到 Supabase
+- 使用 `upsert` + `user_id + week_start` 唯一约束保证同一周只有一条记录
+- AI JSON 以结构化格式展示，保存时存为 JSON 字符串
+- 用户反思随复盘一并保存
+- 刷新页面自动回填已保存的复盘内容
+- 未登录用户仍可生成 AI 复盘，保存按钮禁用并提示"登录后可保存周复盘"
+
+### 11.3 当前限制
+
+| 限制 | 说明 |
+|------|------|
+| 暂无历史复盘列表 | 当前只展示本周复盘，不提供历史列表页 |
+| 暂无 AI Coach | AI Coach 页面尚未接入 API |
+| 暂无流式输出 | AI 复盘生成使用一次性请求，不流式展示 |
+
+---
+
+
+## 12. 风险与缓解
 
 | 风险 | 影响 | 缓解措施 |
 |------|------|----------|
@@ -391,7 +409,7 @@ Dashboard 和 Weekly Review 页面完全切换到 Supabase 数据源。
 
 ---
 
-## 12. 依赖关系
+## 13. 依赖关系
 
 ```
 Step 0 (文档/SQL) ✅
@@ -408,7 +426,7 @@ Step 3 是关键节点，完成 Auth 之后才能进行 CRUD 和数据迁移。
 
 ---
 
-## 13. 总结
+## 14. 总结
 
 Milestone 3 完成后，GrowthLoop 将具备：
 

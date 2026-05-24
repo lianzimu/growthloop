@@ -4,16 +4,38 @@
  * Milestone 2 Step 2.1: 使用 useGrowthLoopLocalData 实现响应式数据读取。
  * Milestone 3 Step 5: 已登录使用 Supabase dailyLogs/actionRecords，未登录使用 localStorage。
  * Milestone 3 Step 5.1: 修复 Review 无数据 bug — 添加 cloudLoading 状态、调试日志、空状态区分。
+ * Milestone 4 Step 1: DeepSeek AI Weekly Review 生成。
+ * Milestone 4 Step 2: 保存 AI 复盘到 Supabase weekly_reviews，支持用户反思。
  */
 
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { actionRecords as mockActionRecords, dailyLogs as mockDailyLogs } from "@/lib/mock-data";
 import { getWeeklyReviewStats } from "@/lib/stats";
 import { useGrowthLoopLocalData } from "@/hooks/use-growthloop-local-data";
 import { useGrowthLoopCloudData } from "@/hooks/use-growthloop-cloud-data";
 import type { WeeklyReviewAIRequest, WeeklyReviewAIResponse } from "@/types/ai";
+import type { WeeklyReview } from "@/types";
+
+/**
+ * 计算本周周一的 ISO 日期字符串（YYYY-MM-DD）。
+ */
+function getMondayStr(): string {
+  const today = new Date();
+  const dayOfWeek = today.getDay();
+  const mondayOffset = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+  const monday = new Date(today);
+  monday.setDate(today.getDate() - mondayOffset);
+  return monday.toISOString().split("T")[0];
+}
+
+/**
+ * 计算本周今天的 ISO 日期字符串。
+ */
+function getTodayStr(): string {
+  return new Date().toISOString().split("T")[0];
+}
 
 export default function ReviewPage() {
   const {
@@ -30,6 +52,8 @@ export default function ReviewPage() {
     actions: cloudActions,
     isLoggedIn,
     loading: cloudLoading,
+    getCurrentWeekReview,
+    upsertWeeklyReview,
   } = useGrowthLoopCloudData();
 
   // 数据源策略：
@@ -45,7 +69,6 @@ export default function ReviewPage() {
     : localActionRecords.length > 0
       ? localActionRecords
       : mockActionRecords;
-  // goals / actions 也使用相同策略（本地模式已从 localStorage 读取，云端从 Supabase）
   const goals = isLoggedIn
     ? cloudGoals
     : localGoals.length > 0
@@ -62,12 +85,61 @@ export default function ReviewPage() {
   const [aiResult, setAiResult] = useState<WeeklyReviewAIResponse | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
 
+  // ===== 保存复盘状态 =====
+  const [savedReview, setSavedReview] = useState<WeeklyReview | null>(null);
+  const [userReflection, setUserReflection] = useState("");
+  const [saveLoading, setSaveLoading] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
   const hasEnoughData = logs.length > 0 || records.length > 0;
+
+  // ===== 已登录时读取本周已保存的复盘 =====
+  const weekStart = getMondayStr();
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadSavedReview() {
+      if (!isLoggedIn) return;
+
+      try {
+        const review = await getCurrentWeekReview(weekStart);
+        if (!cancelled && review) {
+          setSavedReview(review);
+          // 从已保存记录中解析 AI 结果
+          if (review.aiFeedback) {
+            try {
+              const parsed = JSON.parse(review.aiFeedback) as WeeklyReviewAIResponse;
+              setAiResult(parsed);
+            } catch {
+              // aiFeedback 不是 JSON，忽略
+            }
+          }
+          // 回填用户反思
+          if (review.userReflection) {
+            setUserReflection(review.userReflection);
+          }
+          setSaveSuccess(true);
+        }
+      } catch {
+        // 静默处理，展示空白复盘
+      }
+    }
+
+    loadSavedReview();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isLoggedIn, weekStart, getCurrentWeekReview]);
 
   async function handleGenerateAI() {
     setAiLoading(true);
     setAiError(null);
     setAiResult(null);
+    setSaveSuccess(false);
+    setSaveError(null);
     try {
       const payload: WeeklyReviewAIRequest = {
         goals: goals.map((g) => ({
@@ -121,6 +193,60 @@ export default function ReviewPage() {
       setAiError(err instanceof Error ? err.message : "未知错误");
     } finally {
       setAiLoading(false);
+    }
+  }
+
+  // ===== 保存复盘 =====
+  async function handleSaveReview() {
+    if (!aiResult) return;
+    if (!isLoggedIn) {
+      setSaveError("登录后可保存周复盘");
+      return;
+    }
+
+    setSaveLoading(true);
+    setSaveError(null);
+    setSaveSuccess(false);
+
+    try {
+      const metricsSnapshot = {
+        actionCompletionRate: stats.actionCompletionRate,
+        standardDoneCount: stats.standardDoneCount,
+        minimumDoneCount: stats.minimumDoneCount,
+        failedCount: stats.failedCount,
+        skippedCount: stats.skippedCount,
+        avgSleepHours: stats.avgSleepHours,
+        avgEnergyScore: stats.avgEnergyScore,
+        avgMoodScore: stats.avgMoodScore,
+        avgStressScore: stats.avgStressScore,
+      };
+
+      const review: WeeklyReview = {
+        id: savedReview?.id ?? crypto.randomUUID(),
+        userId: savedReview?.userId ?? "",
+        weekStart,
+        weekEnd: getTodayStr(),
+        summary: aiResult.summary,
+        metricsSnapshot,
+        aiFeedback: JSON.stringify(aiResult),
+        nextWeekPlan: JSON.stringify({
+          suggestions: aiResult.nextWeekSuggestions,
+          keepActions: aiResult.keepActions,
+          reduceActions: aiResult.reduceActions,
+          pauseActions: aiResult.pauseActions,
+        }),
+        userReflection,
+        createdAt: savedReview?.createdAt ?? new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      const result = await upsertWeeklyReview(review);
+      setSavedReview(result);
+      setSaveSuccess(true);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "保存失败");
+    } finally {
+      setSaveLoading(false);
     }
   }
 
@@ -223,6 +349,15 @@ export default function ReviewPage() {
           {weekRange}
         </p>
       </section>
+
+      {/* ===== 已保存提示 ===== */}
+      {savedReview && (
+        <section className="rounded-xl border border-emerald-200 dark:border-emerald-800 p-3 bg-emerald-50 dark:bg-emerald-950">
+          <p className="text-xs text-emerald-700 dark:text-emerald-300">
+            已保存 · {new Date(savedReview.updatedAt).toLocaleString("zh-CN")}
+          </p>
+        </section>
+      )}
 
       {/* ===== 完全空状态 ===== */}
       {isCompletelyEmpty && (
@@ -369,7 +504,7 @@ export default function ReviewPage() {
           AI 复盘
         </h2>
 
-        {/* 按钮 */}
+        {/* 按钮（无结果时） */}
         {!aiResult && (
           <>
             <button
@@ -584,6 +719,64 @@ export default function ReviewPage() {
           </div>
         )}
       </section>
+
+      {/* ===== 用户反思 ===== */}
+      {aiResult && (
+        <section className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-4 bg-white dark:bg-zinc-900">
+          <h2 className="text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wide">
+            我的本周反思
+          </h2>
+          <textarea
+            value={userReflection}
+            onChange={(e) => setUserReflection(e.target.value)}
+            placeholder="写下你这周的感想、收获或想对自己的话..."
+            rows={4}
+            className="mt-3 w-full rounded-xl border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 resize-none focus:outline-none focus:ring-2 focus:ring-zinc-900 dark:focus:ring-zinc-300"
+          />
+        </section>
+      )}
+
+      {/* ===== 保存复盘 ===== */}
+      {aiResult && (
+        <section className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-4 bg-white dark:bg-zinc-900 space-y-3">
+          {/* 未登录提示 */}
+          {!isLoggedIn && (
+            <p className="text-xs text-zinc-400 dark:text-zinc-500">
+              登录后可保存周复盘
+            </p>
+          )}
+
+          {/* 保存按钮 */}
+          <button
+            onClick={handleSaveReview}
+            disabled={!isLoggedIn || saveLoading}
+            className={
+              "w-full py-3 rounded-xl text-sm font-medium transition-colors " +
+              (isLoggedIn && !saveLoading
+                ? "bg-emerald-600 text-white hover:bg-emerald-700 dark:bg-emerald-500 dark:hover:bg-emerald-600"
+                : "bg-zinc-100 text-zinc-400 dark:bg-zinc-800 dark:text-zinc-500 cursor-not-allowed")
+            }
+          >
+            {saveLoading
+              ? "保存中..."
+              : savedReview
+                ? "更新复盘"
+                : "保存复盘"}
+          </button>
+
+          {/* 保存状态 */}
+          {saveSuccess && (
+            <p className="text-xs text-emerald-600 dark:text-emerald-400">
+              已保存
+            </p>
+          )}
+          {saveError && (
+            <p className="text-xs text-red-600 dark:text-red-400">
+              {saveError}
+            </p>
+          )}
+        </section>
+      )}
     </div>
   );
 }

@@ -4,7 +4,7 @@
  * 所有转换逻辑集中在此文件，页面组件不散落字段转换。
  */
 
-import type { DailyLog, ActionRecord, Domain, Goal, Action } from "@/types";
+import type { DailyLog, ActionRecord, Domain, Goal, Action, WeeklyReview } from "@/types";
 import type {
   DailyLogRow,
   ActionRecordRow,
@@ -19,6 +19,8 @@ import type {
   DomainUpdate,
   GoalUpdate,
   ActionUpdate,
+  WeeklyReviewRow,
+  WeeklyReviewInsert,
 } from "@/types/supabase";
 
 // ==================== Domain ====================
@@ -228,5 +230,41 @@ export function mapActionRecordToInsert(
     date: record.date,
     status: record.status,
     note: record.note ?? null,
+  };
+}
+
+// ==================== WeeklyReview ====================
+
+export function mapWeeklyReviewRowToWeeklyReview(
+  row: WeeklyReviewRow,
+): WeeklyReview {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    weekStart: row.week_start,
+    weekEnd: row.week_end,
+    summary: row.summary ?? undefined,
+    metricsSnapshot: row.metrics_snapshot as unknown as WeeklyReview["metricsSnapshot"],
+    aiFeedback: row.ai_feedback ?? undefined,
+    nextWeekPlan: row.next_week_plan ?? undefined,
+    userReflection: row.user_reflection ?? undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export function mapWeeklyReviewToInsert(
+  review: WeeklyReview,
+  userId: string,
+): WeeklyReviewInsert {
+  return {
+    user_id: userId,
+    week_start: review.weekStart,
+    week_end: review.weekEnd,
+    summary: review.summary ?? null,
+    metrics_snapshot: (review.metricsSnapshot ?? null) as Record<string, unknown> | null,
+    ai_feedback: review.aiFeedback ?? null,
+    next_week_plan: review.nextWeekPlan ?? null,
+    user_reflection: review.userReflection ?? null,
   };
 }

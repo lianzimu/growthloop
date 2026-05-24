@@ -169,3 +169,30 @@ export interface ActionRecordInsert {
   status: string;
   note?: string | null;
 }
+
+// ==================== WeeklyReview Row ====================
+export interface WeeklyReviewRow {
+  id: string;
+  user_id: string;
+  week_start: string;
+  week_end: string;
+  summary: string | null;
+  metrics_snapshot: Record<string, unknown> | null;
+  ai_feedback: string | null;
+  next_week_plan: string | null;
+  user_reflection: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// ==================== WeeklyReview Insert ====================
+export interface WeeklyReviewInsert {
+  user_id: string;
+  week_start: string;
+  week_end: string;
+  summary?: string | null;
+  metrics_snapshot?: Record<string, unknown> | null;
+  ai_feedback?: string | null;
+  next_week_plan?: string | null;
+  user_reflection?: string | null;
+}

@@ -40,6 +40,15 @@ DEEPSEEK_MODEL=deepseek-v4-flash
 | Daily Feedback 每日反馈 | ❌ 未实现 | 后续计划 |
 | Goal Decomposition 目标分解 | ❌ 未实现 | 后续计划 |
 
+## AI 复盘保存
+
+- AI 生成结果现在可以保存到 Supabase `weekly_reviews` 表
+- 保存内容包含：weekStart/weekEnd、summary、metricsSnapshot、aiFeedback、nextWeekPlan、userReflection
+- 利用 `user_id + week_start` 唯一约束，同一周最多保存一条复盘
+- 已登录用户可以保存，未登录用户仍可生成 AI 复盘但不能保存（保存按钮禁用并提示）
+- 刷新页面后自动回填本周已保存的复盘内容
+- 用户可在 Review 页面填写"我的本周反思"并随复盘一并保存
+
 ## 成本控制原则
 
 1. **只在用户点击按钮时调用** — 不自动生成、不后台轮询

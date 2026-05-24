@@ -2,8 +2,9 @@
  * GrowthLoop 云端数据 Hook
  *
  * Milestone 3 Step 5: 添加 dailyLogs / actionRecords 云端读写。
+ * Milestone 4 Step 2: 添加 weeklyReviews 云端读写。
  *
- * - 已登录时：domains/goals/actions/dailyLogs/actionRecords 仅使用 Supabase 数据
+ * - 已登录时：domains/goals/actions/dailyLogs/actionRecords/weeklyReviews 仅使用 Supabase 数据
  * - 未登录时：hook 返回空数据，页面 fallback 到 localStorage/mock
  * - 暴露 createGoal/createAction/refresh/upsertDailyCheckIn/refreshDailyData 供页面调用
  * - 登录后自动调用 ensureDefaultDomains
@@ -12,7 +13,14 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import type { Domain, Goal, Action, DailyLog, ActionRecord } from "@/types";
+import type {
+  Domain,
+  Goal,
+  Action,
+  DailyLog,
+  ActionRecord,
+  WeeklyReview,
+} from "@/types";
 import type { GoalInsert, ActionInsert } from "@/types/supabase";
 
 // ==================== 类型 ====================
@@ -27,6 +35,8 @@ export interface UseCloudDataResult {
   dailyLogs: DailyLog[];
   /** Supabase 返回的 actionRecords */
   actionRecords: ActionRecord[];
+  /** Supabase 返回的 weeklyReviews */
+  weeklyReviews: WeeklyReview[];
   /** 是否有 Supabase 返回的 domains */
   hasCloudDomains: boolean;
   /** 是否有 Supabase 返回的 goals */
@@ -43,6 +53,12 @@ export interface UseCloudDataResult {
   refresh: () => Promise<void>;
   /** 刷新 dailyLogs + actionRecords */
   refreshDailyData: () => Promise<void>;
+  /** 刷新 weeklyReviews */
+  refreshWeeklyReviews: () => Promise<void>;
+  /** 获取当前周的已保存复盘（按 week_start 查询），无记录返回 null */
+  getCurrentWeekReview: (weekStart: string) => Promise<WeeklyReview | null>;
+  /** 保存每周复盘到 Supabase（upsert） */
+  upsertWeeklyReview: (review: WeeklyReview) => Promise<WeeklyReview>;
   /** 创建 goal（仅已登录时可用） */
   createGoal: (input: GoalInsert) => Promise<Goal>;
   /** 创建 action（仅已登录时可用） */
@@ -67,6 +83,7 @@ export function useGrowthLoopCloudData(): UseCloudDataResult {
   const [actions, setActions] = useState<Action[]>([]);
   const [dailyLogs, setDailyLogs] = useState<DailyLog[]>([]);
   const [actionRecords, setActionRecords] = useState<ActionRecord[]>([]);
+  const [weeklyReviews, setWeeklyReviews] = useState<WeeklyReview[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -193,6 +210,34 @@ export function useGrowthLoopCloudData(): UseCloudDataResult {
     }
   }, []);
 
+  // 加载 weeklyReviews
+  const loadWeeklyReviews = useCallback(async (): Promise<{
+    weeklyReviews: WeeklyReview[];
+    error: string | null;
+  }> => {
+    try {
+      const { getWeeklyReviews } = await import(
+        "@/lib/supabase/weekly-reviews"
+      );
+
+      const data = await getWeeklyReviews().catch(() => [] as WeeklyReview[]);
+
+      if (process.env.NODE_ENV === "development") {
+        console.log("[GrowthLoop Cloud] Weekly reviews loaded", {
+          count: data.length,
+        });
+      }
+
+      return { weeklyReviews: data, error: null };
+    } catch (err) {
+      const msg =
+        err instanceof Error
+          ? err.message
+          : "Failed to load weekly reviews";
+      return { weeklyReviews: [], error: msg };
+    }
+  }, []);
+
   // 登录后自动加载数据 + ensureDefaultDomains
   useEffect(() => {
     let cancelled = false;
@@ -205,6 +250,7 @@ export function useGrowthLoopCloudData(): UseCloudDataResult {
           setActions([]);
           setDailyLogs([]);
           setActionRecords([]);
+          setWeeklyReviews([]);
           setLoading(false);
           setError(null);
         }
@@ -228,9 +274,10 @@ export function useGrowthLoopCloudData(): UseCloudDataResult {
         }
 
         // 并行加载全量数据
-        const [coreResult, dailyResult] = await Promise.all([
+        const [coreResult, dailyResult, weeklyResult] = await Promise.all([
           loadCloudData(),
           loadDailyData(),
+          loadWeeklyReviews(),
         ]);
 
         if (!cancelled) {
@@ -239,7 +286,8 @@ export function useGrowthLoopCloudData(): UseCloudDataResult {
           setActions(coreResult.actions);
           setDailyLogs(dailyResult.dailyLogs);
           setActionRecords(dailyResult.actionRecords);
-          setError(coreResult.error ?? dailyResult.error);
+          setWeeklyReviews(weeklyResult.weeklyReviews);
+          setError(coreResult.error ?? dailyResult.error ?? weeklyResult.error);
         }
       } catch (err) {
         if (!cancelled) {
@@ -262,7 +310,7 @@ export function useGrowthLoopCloudData(): UseCloudDataResult {
     return () => {
       cancelled = true;
     };
-  }, [isLoggedIn, loadCloudData, loadDailyData]);
+  }, [isLoggedIn, loadCloudData, loadDailyData, loadWeeklyReviews]);
 
   // refresh 方法：重新加载全量数据（包括 domains/goals/actions）
   const refresh = useCallback(async () => {
@@ -282,6 +330,64 @@ export function useGrowthLoopCloudData(): UseCloudDataResult {
     setActionRecords(result.actionRecords);
     if (result.error) setError(result.error);
   }, [isLoggedIn, loadDailyData]);
+
+  // refreshWeeklyReviews：重新加载 weeklyReviews
+  const refreshWeeklyReviews = useCallback(async () => {
+    if (!isLoggedIn) return;
+    const result = await loadWeeklyReviews();
+    setWeeklyReviews(result.weeklyReviews);
+    if (result.error) setError(result.error);
+  }, [isLoggedIn, loadWeeklyReviews]);
+
+  // getCurrentWeekReview：按 weekStart 查询单条记录
+  const getCurrentWeekReview = useCallback(
+    async (weekStart: string): Promise<WeeklyReview | null> => {
+      if (!isLoggedIn) return null;
+
+      try {
+        const { getWeeklyReviewByWeekStart } = await import(
+          "@/lib/supabase/weekly-reviews"
+        );
+        return await getWeeklyReviewByWeekStart(weekStart);
+      } catch (err) {
+        if (process.env.NODE_ENV === "development") {
+          console.error(
+            "[GrowthLoop Cloud] Failed to get current week review:",
+            err,
+          );
+        }
+        return null;
+      }
+    },
+    [isLoggedIn],
+  );
+
+  // upsertWeeklyReview：保存每周复盘
+  const upsertWeeklyReviewFn = useCallback(
+    async (review: WeeklyReview): Promise<WeeklyReview> => {
+      if (!isLoggedIn) {
+        throw new Error("Cannot save weekly review: user not logged in");
+      }
+
+      if (process.env.NODE_ENV === "development") {
+        console.log("[GrowthLoop Cloud] Saving weekly review", {
+          weekStart: review.weekStart,
+          weekEnd: review.weekEnd,
+        });
+      }
+
+      const { upsertWeeklyReview } = await import(
+        "@/lib/supabase/weekly-reviews"
+      );
+      const result = await upsertWeeklyReview(review);
+
+      // 刷新本地 state
+      await refreshWeeklyReviews();
+
+      return result;
+    },
+    [isLoggedIn, refreshWeeklyReviews],
+  );
 
   // createGoal 方法
   const createGoalFn = useCallback(
@@ -397,6 +503,7 @@ export function useGrowthLoopCloudData(): UseCloudDataResult {
     actions,
     dailyLogs,
     actionRecords,
+    weeklyReviews,
     hasCloudDomains,
     hasCloudGoals,
     hasCloudActions,
@@ -405,6 +512,9 @@ export function useGrowthLoopCloudData(): UseCloudDataResult {
     error,
     refresh,
     refreshDailyData,
+    refreshWeeklyReviews,
+    getCurrentWeekReview,
+    upsertWeeklyReview: upsertWeeklyReviewFn,
     createGoal: createGoalFn,
     createAction: createActionFn,
     upsertDailyCheckIn,
