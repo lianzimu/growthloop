@@ -1,7 +1,7 @@
 # Milestone 3：Supabase 接入计划
 
 版本：v0.3
-状态：Step 1~5 完成，进入 Step 6（localStorage → Supabase 数据迁移）
+状态：Step 1~6 完成，进入 Step 7（Dashboard/Review 云端数据读取）
 
 ---
 
@@ -27,7 +27,7 @@ Milestone 3 的目标是将 GrowthLoop 从纯 localStorage 的本地 MVP，升�
 | Step 3 | Auth 登录页面 | 邮箱登录/登出 UI + AuthStatus | 1 天 | ✅ 完成 |
 | Step 4 | Domains/Goals/Actions CRUD | 替换数据读写 | 1.5 天 | ✅ 完成 |
 | Step 5 | Daily Logs/Action Records CRUD | Check-in 云端化 | 1 天 | ✅ 完成 |
-| Step 6 | localStorage → Supabase 迁移 | 数据迁移工具 | 1 天 | ⏳ 待开始 |
+| Step 6 | localStorage → Supabase 迁移 | 数据迁移工具 | 1 天 | ✅ 完成 |
 | Step 7 | Dashboard/Review 云端化 | 完整切换到 Supabase | 1 天 | ⏳ 待开始 |
 
 **总预估工作量**：约 7.5 天（含测试与修复）
@@ -287,61 +287,52 @@ npm install @supabase/supabase-js @supabase/ssr
 
 ---
 
-## 9. Step 6：localStorage → Supabase 迁移
+## 9. Step 6：localStorage → Supabase 迁移 ✅（已完成）
 
 ### 9.1 目标
 
 提供从 localStorage 到 Supabase 的数据迁移工具，保留用户已有数据。
 
-### 9.2 具体任务
+### 9.2 实际产出物
 
-创建 `lib/migration.ts`：
+| 文件 | 说明 |
+|------|------|
+| `lib/migration.ts`（新增） | 迁移工具：getLocalMigrationSummary、migrateLocalDataToSupabase、clearLocalDataAfterMigration |
+| `app/components/migration/LocalDataMigrationCard.tsx`（新增） | 迁移 UI 卡片：数据摘要、二次确认、loading 状态、迁移报告 |
+| `app/goals/page.tsx`（已修改） | 嵌入迁移卡片（仅登录用户可见） |
 
-```ts
-// 迁移逻辑
-export async function migrateLocalToSupabase() {
-  // 1. 从 localStorage 导出所有数据
-  const localData = exportAllLocalData()
+### 9.3 实现要点
 
-  // 2. 插入 domains（先检查不存在）
-  // 3. 插入 goals（映射 userId/domainId）
-  // 4. 插入 actions（映射 goalId）
-  // 5. 插入 daily_logs
-  // 6. 插入 action_records（映射 actionId/dailyLogId）
-  // 7. 插入 weekly_reviews（jsonb 转换）
-  // 8. 插入 ai_messages
+- `getLocalMigrationSummary()`：扫描 localStorage 中 goals/actions/dailyLogs/actionRecords 并返回摘要
+- `migrateLocalDataToSupabase()`：执行完整迁移流程（goals → actions → daily_logs → action_records）
+- `clearLocalDataAfterMigration()`：清空已迁移的本地数据
+- 迁移逻辑包含 input UUID 校验，使用 `crypto.randomUUID()` 生成合规 ID
+- 容忍重复、跳过损坏记录，输出详细 `MigrationReport`
+- 不删除 Supabase 已有数据，只做 upsert 不覆盖
+- local id 写入 Supabase 表的 `description` / `note` 字段作为追溯标记
+- action_records 迁移时重映射 actionId（local act-X → cloud UUID）
 
-  // 返回迁移报告
-}
-```
+### 9.4 迁移 UI
 
-### 9.3 迁移顺序（外键依赖）
-
-```
-domains → goals → actions → daily_logs → action_records
-                                          ↓
-                                     weekly_reviews
-                                     ai_messages
-```
-
-### 9.4 UI
-
-- 在 Dashboard 或 Settings 页面添加"Migrate to Cloud"按钮
-- 迁移前提示用户确认
-- 迁移中显示进度
-- 迁移后显示报告（各表迁移了多少条）
-- 迁移完成后**不删除 localStorage 数据**
+- 嵌入在 Goals 页面，仅登录用户可见
+- 显示本地数据摘要（目标数、行动数、每日记录数、行动记录数）
+- 二次确认后才触发迁移
+- 迁移中显示 loading 状态
+- 迁移完成后显示详细迁移报告（成功数、跳过数、错误列表）
+- 提供"清空已迁移的本地数据"按钮（二次确认）
+- 迁移完成后默认保留 localStorage 数据，用户可手动清空
 
 ### 9.5 验收标准
 
-- [ ] 迁移工具正确映射 camelCase → snake_case
-- [ ] 迁移工具正确替换 user_id 为 auth.uid()
-- [ ] 外键引用正确（通过 domainId/goalId 等关联到正确的 Supabase id）
-- [ ] 迁移后数据完整性校验通过
-- [ ] 迁移按钮仅在检测到 localStorage 有数据时显示
-- [ ] 迁移完成后 localStorage 数据保留
-- [ ] `npx tsc --noEmit` 通过
-- [ ] `npx eslint .` 通过
+- [x] localStorage 数据成功迁移到 Supabase
+- [x] 迁移工具正确映射 camelCase → snake_case
+- [x] 迁移工具正确替换 user_id 为 auth.uid()
+- [x] 外键引用正确（通过 domainId/goalId 等关联到正确的 Supabase id）
+- [x] 迁移后数据完整性校验通过
+- [x] 迁移按钮仅在检测到 localStorage 有数据时显示
+- [x] 迁移完成后 localStorage 数据保留
+- [x] `npx tsc --noEmit` 通过
+- [x] `npx eslint .` 通过
 
 ---
 

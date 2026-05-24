@@ -9,6 +9,7 @@
  * - initializedRef 确保只初始化一次，避免 cloud 数据更新后覆盖用户编辑
  * - 按钮使用 action.id（UUID）作为 key 查找 record，不会出现 mismatch
  * - 保存前清洗 invalid actionRecords（mock ID + 非 UUID）
+ * - 保存后更新 dailyLog.id 为 Supabase 返回的真实 UUID
  */
 
 "use client";
@@ -26,17 +27,14 @@ import {
 } from "@/lib/local-storage";
 import { useGrowthLoopLocalData } from "@/hooks/use-growthloop-local-data";
 import { useGrowthLoopCloudData } from "@/hooks/use-growthloop-cloud-data";
+import { isUuid } from "@/lib/utils";
 import type { Action } from "@/types";
 
 // ==================== 常量 ====================
 const USER_ID = "local-user-001";
 
-// ==================== UUID 校验 ====================
-function isUuid(str: string): boolean {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
-    str,
-  );
-}
+// dev 调试标志
+const DEV = process.env.NODE_ENV === "development";
 
 // ==================== 默认 DailyLog 模板 ====================
 function emptyDailyLog(date: string): DailyLog {
@@ -171,12 +169,12 @@ export default function CheckInPage() {
             ? makeDefaultRecords(date, log.id, cloudActions)
             : [];
 
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- 从外部数据源（Supabase/localStorage）同步初始化表单 state
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- 从外部数据源同步初始化表单 state
       setDailyLog(log);
       setActionRecords(records);
       initializedRef.current = true;
 
-      if (process.env.NODE_ENV === "development") {
+      if (DEV) {
         console.log("[CheckIn] Cloud initialized:", {
           logDate: log.date,
           existingLog: !!cloudLog,
@@ -215,7 +213,7 @@ export default function CheckInPage() {
       setActionRecords(records);
       initializedRef.current = true;
 
-      if (process.env.NODE_ENV === "development") {
+      if (DEV) {
         console.log("[CheckIn] Local initialized:", {
           source: localActions.length > 0 ? "localStorage" : "mock",
           actionCount: sourceActions.length,
@@ -223,6 +221,7 @@ export default function CheckInPage() {
         });
       }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- date and isCloudReady/isLocalReady derived from listed deps
   }, [
     isLoggedIn,
     cloudLoading,
@@ -238,6 +237,7 @@ export default function CheckInPage() {
   ]);
 
   // ===== 今日行动来源（仅用于 UI 渲染判断） =====
+  // 云端模式仅使用 cloudActions，不 fallback mock
   const actionSource: Action[] = isLoggedIn
     ? cloudActions
     : localActions.length > 0
@@ -254,7 +254,7 @@ export default function CheckInPage() {
   );
 
   // ===== 调试日志（仅 development） =====
-  if (process.env.NODE_ENV === "development") {
+  if (DEV) {
     console.log("[CheckIn] Mode:", isLoggedIn ? "cloud" : "local");
     console.log(
       "[CheckIn] Actions source:",
@@ -272,10 +272,12 @@ export default function CheckInPage() {
       "| cloudActionRecords:",
       cloudActionRecords.length,
     );
-    console.log(
-      "[CheckIn] actionRecord sample ids:",
-      actionRecords.slice(0, 3).map((r) => r.actionId),
-    );
+    if (actionRecords.length > 0) {
+      console.log(
+        "[CheckIn] actionRecord sample ids:",
+        actionRecords.slice(0, 3).map((r) => r.actionId),
+      );
+    }
   }
 
   // ===== 更新 DailyLog 字段 =====
@@ -293,6 +295,7 @@ export default function CheckInPage() {
   );
 
   // ===== 更新某条 ActionRecord 的状态 =====
+  // 使用 actionId (UUID) 作为 key，不依赖数组 index
   const updateRecordStatus = useCallback(
     (actionId: string, status: ActionRecordStatus) => {
       setActionRecords((prev) => {
@@ -350,7 +353,7 @@ export default function CheckInPage() {
         // 过滤：只保留 actionId 存在于 cloudActions 的记录
         const validRecords = actionRecords.filter((r) => {
           const exists = cloudActions.some((a) => a.id === r.actionId);
-          if (!exists && process.env.NODE_ENV === "development") {
+          if (!exists && DEV) {
             console.warn(
               "[CheckIn] Filtered out invalid record (actionId not in cloudActions):",
               r.actionId,
@@ -370,7 +373,7 @@ export default function CheckInPage() {
           );
         }
 
-        if (process.env.NODE_ENV === "development") {
+        if (DEV) {
           console.log("[CheckIn] Saving to cloud - payload:", {
             dailyLog: { date: dailyLog.date, sleepHours: dailyLog.sleepHours },
             actionRecords: validRecords.map((r) => ({
@@ -386,9 +389,10 @@ export default function CheckInPage() {
           updatedAt: new Date().toISOString(),
         };
 
-        await upsertDailyCheckIn(logToSave, validRecords);
+        const savedLog = await upsertDailyCheckIn(logToSave, validRecords);
 
-        // 更新本地 state 为验证后的数据
+        // 更新本地 state 为验证后的数据 + Supabase 返回的真实 ID
+        setDailyLog((prev) => ({ ...prev, id: savedLog.id }));
         setActionRecords(validRecords);
         setSaveMessage("✓ 已保存到云端");
         setSaved(true);

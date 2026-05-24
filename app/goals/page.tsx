@@ -30,6 +30,7 @@ import {
 import { useGrowthLoopLocalData } from "@/hooks/use-growthloop-local-data";
 import { useGrowthLoopCloudData } from "@/hooks/use-growthloop-cloud-data";
 import { mapGoalToInsert, mapActionToInsert } from "@/lib/supabase/mappers";
+import LocalDataMigrationCard from "@/app/components/migration/LocalDataMigrationCard";
 
 // ==================== 常量 ====================
 const USER_ID = "local-user-001";
@@ -1059,6 +1060,12 @@ export default function GoalsPage() {
           </div>
         )}
       </section>
+
+      {/* ===== 数据迁移（登录用户可见） ===== */}
+      <LocalDataMigrationCard
+        isLoggedIn={isLoggedIn}
+        onRefresh={cloudRefresh}
+      />
 
       {/* 底部间距（避免 BottomNav 遮挡） */}
       <div className="pb-16" />

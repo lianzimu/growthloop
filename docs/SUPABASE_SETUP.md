@@ -295,12 +295,24 @@ SDK 会自动拼接 API 路径，手动添加 `/rest/v1/` 会导致请求失败�
 - ✅ 未登录用户仍然使用 localStorage
 - ⚠️ localStorage → Supabase 迁移将在 Step 6 单独实现
 
-### Step 6：localStorage → Supabase 迁移
+### Step 6：localStorage → Supabase 迁移 ✅（已完成）
 
-- 创建 `lib/migration.ts` 迁移工具
-- 提供一键迁移按钮（Dashboard 页面）
-- 迁移后验证数据完整性
-- **保留 localStorage 数据不删除**，作为备份
+- ✅ 创建 `lib/migration.ts` 迁移工具
+  - `getLocalMigrationSummary()`：扫描 localStorage 并返回本地数据摘要
+  - `migrateLocalDataToSupabase()`：执行完整的迁移流程（goals → actions → daily_logs → action_records）
+  - `clearLocalDataAfterMigration()`：清空已迁移的本地数据
+  - 迁移逻辑包含 input UUID 校验，使用 `crypto.randomUUID()` 生成合规 ID
+  - 容忍重复、跳过损坏记录，输出详细 `MigrationReport`
+  - 不删除 Supabase 已有数据，只做 upsert 不覆盖
+- ✅ 创建 `app/components/migration/LocalDataMigrationCard.tsx` 迁移 UI 卡片
+  - 显示本地数据摘要（目标数、行动数、每日记录数、行动记录数）
+  - 二次确认后才触发迁移
+  - 迁移中显示 loading 状态
+  - 迁移完成后显示详细迁移报告（成功数、跳过数、错误列表）
+  - 提供"清空已迁移的本地数据"按钮（二次确认）
+  - 嵌入在 Goals 页面（`app/goals/page.tsx`）
+- ⚠️ 迁移完成后默认保留 localStorage 数据，用户可手动清空
+- 迁移入口位于 Goals 页面的"数据迁移"卡片（仅登录用户可见）
 
 ### Step 7：Dashboard/Review 云端数据读取
 
@@ -308,6 +320,12 @@ SDK 会自动拼接 API 路径，手动添加 `/rest/v1/` 会导致请求失败�
 - Weekly Review 切换到 Supabase 数据源
 - 验证所有页面展示正确
 - 移除 feature flag，完全切换到 Supabase
+
+### Step 8：迁移入口
+
+- 迁移入口位于 Goals 页面（仅登录用户可见）
+- 迁移完成后可调用 `cloudRefresh()` 刷新云端数据
+- 迁移报告包含 `migratedGoalsCount`、`migratedActionsCount`、`migratedDailyLogsCount`、`migratedActionRecordsCount`、`skippedCount`、`errors[]`
 
 ---
 
