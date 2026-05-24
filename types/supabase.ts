@@ -119,3 +119,53 @@ export interface ActionUpdate {
   is_active?: boolean;
   is_weekly_focus?: boolean;
 }
+
+// ==================== DailyLog Row ====================
+export interface DailyLogRow {
+  id: string;
+  user_id: string;
+  date: string;
+  sleep_hours: number | null;
+  energy_score: number | null;
+  mood_score: number | null;
+  stress_score: number | null;
+  note: string | null;
+  blockers: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// ==================== ActionRecord Row ====================
+export interface ActionRecordRow {
+  id: string;
+  user_id: string;
+  action_id: string;
+  daily_log_id: string | null;
+  date: string;
+  status: string;
+  note: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// ==================== DailyLog Insert ====================
+export interface DailyLogInsert {
+  user_id: string;
+  date: string;
+  sleep_hours?: number | null;
+  energy_score?: number | null;
+  mood_score?: number | null;
+  stress_score?: number | null;
+  note?: string | null;
+  blockers?: string | null;
+}
+
+// ==================== ActionRecord Insert ====================
+export interface ActionRecordInsert {
+  user_id: string;
+  action_id: string;
+  daily_log_id?: string | null;
+  date: string;
+  status: string;
+  note?: string | null;
+}

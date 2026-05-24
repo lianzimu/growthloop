@@ -2,7 +2,7 @@
  * 首页 - 每日一览 Dashboard
  *
  * Milestone 2 Step 2.1: 使用 useGrowthLoopLocalData 实现响应式数据读取。
- * localStorage 有数据优先用，无数据 fallback mock。
+ * Milestone 3 Step 5: 已登录使用 Supabase dailyLogs/actionRecords，未登录使用 localStorage。
  */
 
 "use client";
@@ -29,19 +29,30 @@ export default function HomePage() {
   const {
     goals: cloudGoals,
     actions: cloudActions,
+    dailyLogs: cloudDailyLogs,
+    actionRecords: cloudActionRecords,
     isLoggedIn,
+    loading: cloudLoading,
   } = useGrowthLoopCloudData();
+
+  // dev 调试日志
+  if (process.env.NODE_ENV === "development") {
+    console.log("[Dashboard] Mode:", isLoggedIn ? "cloud" : "local");
+    console.log("[Dashboard] cloudLoading:", cloudLoading);
+    console.log("[Dashboard] cloudGoals:", cloudGoals.length, "| cloudActions:", cloudActions.length);
+    console.log("[Dashboard] cloudDailyLogs:", cloudDailyLogs.length, "| cloudActionRecords:", cloudActionRecords.length);
+  }
 
   // 数据源策略：
   // 已登录 → 仅 cloud 数据（即使为空也不 fallback localStorage/mock）
   // 未登录 → localStorage → mock
   const logs = isLoggedIn
-    ? []
+    ? cloudDailyLogs
     : localDailyLogs.length > 0
       ? localDailyLogs
       : mockDailyLogs;
   const records = isLoggedIn
-    ? []
+    ? cloudActionRecords
     : localActionRecords.length > 0
       ? localActionRecords
       : mockActionRecords;
@@ -63,6 +74,28 @@ export default function HomePage() {
 
   // 完成率百分比
   const ratePercent = Math.round(weekRate.rate * 100);
+
+  // ===== 加载中 =====
+  if (isLoggedIn && cloudLoading) {
+    return (
+      <div className="space-y-6">
+        <section>
+          <p className="text-xs text-zinc-500 dark:text-zinc-400">
+            {new Date().toLocaleDateString("zh-CN", {
+              year: "numeric",
+              month: "long",
+              day: "numeric",
+              weekday: "long",
+            })}
+          </p>
+          <h1 className="text-xl font-semibold mt-1">今日概要</h1>
+        </section>
+        <p className="text-sm text-zinc-400 dark:text-zinc-500 text-center py-12">
+          加载中...
+        </p>
+      </div>
+    );
+  }
 
   // 今日行动状态标记
   function statusLabel(

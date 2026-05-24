@@ -4,8 +4,12 @@
  * 所有转换逻辑集中在此文件，页面组件不散落字段转换。
  */
 
-import type { Domain, Goal, Action } from "@/types";
+import type { DailyLog, ActionRecord, Domain, Goal, Action } from "@/types";
 import type {
+  DailyLogRow,
+  ActionRecordRow,
+  DailyLogInsert,
+  ActionRecordInsert,
   DomainRow,
   GoalRow,
   ActionRow,
@@ -158,4 +162,71 @@ export function mapActionUpdateToSnake(
   if (update.is_active !== undefined) result.is_active = update.is_active;
   if (update.is_weekly_focus !== undefined) result.is_weekly_focus = update.is_weekly_focus;
   return result;
+}
+
+// ==================== DailyLog ====================
+
+export function mapDailyLogRowToDailyLog(row: DailyLogRow): DailyLog {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    date: row.date,
+    sleepHours: row.sleep_hours ?? 0,
+    energyScore: row.energy_score ?? 3,
+    moodScore: row.mood_score ?? 3,
+    stressScore: row.stress_score ?? 3,
+    note: row.note ?? undefined,
+    blockers: row.blockers ?? undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export function mapDailyLogToInsert(
+  log: DailyLog,
+  userId: string,
+): DailyLogInsert {
+  return {
+    user_id: userId,
+    date: log.date,
+    sleep_hours: log.sleepHours ?? null,
+    energy_score: log.energyScore ?? null,
+    mood_score: log.moodScore ?? null,
+    stress_score: log.stressScore ?? null,
+    note: log.note ?? null,
+    blockers: log.blockers ?? null,
+  };
+}
+
+// ==================== ActionRecord ====================
+
+export function mapActionRecordRowToActionRecord(
+  row: ActionRecordRow,
+): ActionRecord {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    actionId: row.action_id,
+    dailyLogId: row.daily_log_id ?? "",
+    date: row.date,
+    status: row.status as ActionRecord["status"],
+    note: row.note ?? undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export function mapActionRecordToInsert(
+  record: ActionRecord,
+  userId: string,
+  dailyLogId?: string,
+): ActionRecordInsert {
+  return {
+    user_id: userId,
+    action_id: record.actionId,
+    daily_log_id: dailyLogId ?? null,
+    date: record.date,
+    status: record.status,
+    note: record.note ?? null,
+  };
 }

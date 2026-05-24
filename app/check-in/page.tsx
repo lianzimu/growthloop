@@ -1,13 +1,19 @@
 /**
- * 每日记录页 - Daily Check-in（可交互版）
+ * 每日记录页 - Daily Check-in（Cloud + Local）
  *
- * Milestone 2 Step 2.1: 使用稳定 ID、useGrowthLoopLocalData hook、
- * localStorage 事件机制实现 upsert 与跨页面响应式刷新。
+ * Milestone 3 Step 5: 已登录用户保存到 Supabase，未登录用户使用 localStorage。
+ * Milestone 3 Step 5.1: 修复云端模式 actionId 混入 mock ID、按钮无响应、Review 无数据等 bug。
+ *
+ * 核心修复：
+ * - useEffect 初始化 state，而非 useState lazy initializer（避免首次渲染时 isLoggedIn=false 用 mock ID）
+ * - initializedRef 确保只初始化一次，避免 cloud 数据更新后覆盖用户编辑
+ * - 按钮使用 action.id（UUID）作为 key 查找 record，不会出现 mismatch
+ * - 保存前清洗 invalid actionRecords（mock ID + 非 UUID）
  */
 
 "use client";
 
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import type { DailyLog, ActionRecord, ActionRecordStatus } from "@/types";
 import { actions as mockActions } from "@/lib/mock-data";
 import { getTodayActions } from "@/lib/stats";
@@ -25,6 +31,13 @@ import type { Action } from "@/types";
 // ==================== 常量 ====================
 const USER_ID = "local-user-001";
 
+// ==================== UUID 校验 ====================
+function isUuid(str: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+    str,
+  );
+}
+
 // ==================== 默认 DailyLog 模板 ====================
 function emptyDailyLog(date: string): DailyLog {
   return {
@@ -40,6 +53,26 @@ function emptyDailyLog(date: string): DailyLog {
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
+}
+
+/** 为每个行动创建默认 record */
+function makeDefaultRecords(
+  date: string,
+  dailyLogId: string,
+  actions: Action[],
+): ActionRecord[] {
+  const now = new Date().toISOString();
+  return actions.map((action) => ({
+    id: stableActionRecordId(date, action.id),
+    userId: USER_ID,
+    actionId: action.id,
+    dailyLogId,
+    date,
+    status: "skipped" as ActionRecordStatus,
+    note: "",
+    createdAt: now,
+    updatedAt: now,
+  }));
 }
 
 // ==================== 评分选项 ====================
@@ -75,66 +108,175 @@ const ACTION_STATUS_OPTIONS: {
 export default function CheckInPage() {
   const date = todayStr();
 
-  // 从 hook 获取本地数据（含响应式刷新能力）
+  // ===== 本地数据 =====
   const {
     dailyLogs: localDailyLogs,
     actionRecords: localActionRecords,
     actions: localActions,
   } = useGrowthLoopLocalData();
 
-  // 从云端获取数据（Cloud-First）
+  // ===== 云端数据 =====
   const {
     actions: cloudActions,
-    hasCloudActions,
+    isLoggedIn,
+    loading: cloudLoading,
+    dailyLogs: cloudDailyLogs,
+    actionRecords: cloudActionRecords,
+    upsertDailyCheckIn,
   } = useGrowthLoopCloudData();
 
-  // 今日行动来源：Cloud-First（cloud > local > mock）
-  const actionSource: Action[] = hasCloudActions
+  // ===== 判断数据是否就绪 =====
+  // Cloud 模式：需要 isLoggedIn && !cloudLoading
+  // Local 模式：始终就绪（localStorage 同步读取）
+  const isCloudReady = isLoggedIn && !cloudLoading;
+  const isLocalReady = !isLoggedIn;
+
+  // ===== 初始化标记 =====
+  // 防止初始化后因依赖变化重复初始化（覆盖用户编辑）
+  const initializedRef = useRef(false);
+  // 追踪上一次 login 状态，用于检测 login/logout 切换
+  const prevLoggedInRef = useRef(isLoggedIn);
+
+  // ===== 表单 state =====
+  // 初始值用空模板，useEffect 在数据就绪后会填充
+  const [dailyLog, setDailyLog] = useState<DailyLog>(() =>
+    emptyDailyLog(date),
+  );
+  const [actionRecords, setActionRecords] = useState<ActionRecord[]>([]);
+  const [saved, setSaved] = useState(false);
+  const [saveMessage, setSaveMessage] = useState("");
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  // ===== 初始化 state（数据就绪时同步一次） =====
+  useEffect(() => {
+    // 检测 login/logout 切换，重置初始化标记
+    if (prevLoggedInRef.current !== isLoggedIn) {
+      prevLoggedInRef.current = isLoggedIn;
+      initializedRef.current = false;
+    }
+
+    // 跳过已初始化的组件（同一登录会话内不重复初始化）
+    if (initializedRef.current) return;
+
+    if (isCloudReady) {
+      // === 云端模式：从 Supabase 数据初始化 ===
+      const cloudLog = cloudDailyLogs.find((l) => l.date === date);
+      const cloudRecords = cloudActionRecords.filter((r) => r.date === date);
+
+      const log = cloudLog ?? emptyDailyLog(date);
+      const records =
+        cloudRecords.length > 0
+          ? cloudRecords
+          : cloudActions.length > 0
+            ? makeDefaultRecords(date, log.id, cloudActions)
+            : [];
+
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- 从外部数据源（Supabase/localStorage）同步初始化表单 state
+      setDailyLog(log);
+      setActionRecords(records);
+      initializedRef.current = true;
+
+      if (process.env.NODE_ENV === "development") {
+        console.log("[CheckIn] Cloud initialized:", {
+          logDate: log.date,
+          existingLog: !!cloudLog,
+          existingRecordCount: cloudRecords.length,
+          generatedRecordCount:
+            cloudRecords.length > 0
+              ? 0
+              : cloudActions.length > 0
+                ? cloudActions.length
+                : 0,
+          cloudActionsCount: cloudActions.length,
+        });
+        if (records.length > 0) {
+          console.log(
+            "[CheckIn] actionRecord IDs:",
+            records.map((r) => r.actionId),
+          );
+        }
+      }
+    } else if (isLocalReady) {
+      // === 本地模式：从 localStorage 初始化 ===
+      const existingLog = localDailyLogs.find((l) => l.date === date);
+      const existingRecords = localActionRecords.filter((r) => r.date === date);
+
+      const log = existingLog ?? emptyDailyLog(date);
+      const sourceActions: Action[] =
+        localActions.length > 0 ? localActions : mockActions;
+      const records =
+        existingRecords.length > 0
+          ? existingRecords
+          : sourceActions.length > 0
+            ? makeDefaultRecords(date, log.id, sourceActions)
+            : [];
+
+      setDailyLog(log);
+      setActionRecords(records);
+      initializedRef.current = true;
+
+      if (process.env.NODE_ENV === "development") {
+        console.log("[CheckIn] Local initialized:", {
+          source: localActions.length > 0 ? "localStorage" : "mock",
+          actionCount: sourceActions.length,
+          recordCount: records.length,
+        });
+      }
+    }
+  }, [
+    isLoggedIn,
+    cloudLoading,
+    date,
+    cloudDailyLogs,
+    cloudActionRecords,
+    cloudActions,
+    localDailyLogs,
+    localActionRecords,
+    localActions,
+    isCloudReady,
+    isLocalReady,
+  ]);
+
+  // ===== 今日行动来源（仅用于 UI 渲染判断） =====
+  const actionSource: Action[] = isLoggedIn
     ? cloudActions
     : localActions.length > 0
       ? localActions
       : mockActions;
 
-  // ===== 今日应执行的行动列表 =====
+  // ===== 今日应执行的行动列表（用于确定哪些 action 显示） =====
   const todayActions = useMemo(
-    () => getTodayActions(actionSource, localActionRecords),
-    [actionSource, localActionRecords],
+    () => {
+      const records = isLoggedIn ? cloudActionRecords : localActionRecords;
+      return getTodayActions(actionSource, records);
+    },
+    [actionSource, isLoggedIn, cloudActionRecords, localActionRecords],
   );
 
-  // ===== 初始化今日 DailyLog & ActionRecords =====
-  const initialData = useMemo(() => {
-    const existingLog = localDailyLogs.find((l) => l.date === date) ?? null;
-    const existingRecords = localActionRecords.filter((r) => r.date === date);
-
-    const log = existingLog ?? emptyDailyLog(date);
-
-    // 如果没有今日记录，为每个今日行动创建空白记录（使用稳定 ID）
-    let records: ActionRecord[];
-    if (existingRecords.length > 0) {
-      records = existingRecords;
-    } else {
-      const now = new Date().toISOString();
-      records = todayActions.map(({ action }) => ({
-        id: stableActionRecordId(date, action.id),
-        userId: USER_ID,
-        actionId: action.id,
-        dailyLogId: log.id,
-        date,
-        status: "skipped" as ActionRecordStatus,
-        note: "",
-        createdAt: now,
-        updatedAt: now,
-      }));
-    }
-
-    return { log, records };
-  }, [date, localDailyLogs, localActionRecords, todayActions]);
-
-  const [dailyLog, setDailyLog] = useState<DailyLog>(initialData.log);
-  const [actionRecords, setActionRecords] = useState<ActionRecord[]>(
-    initialData.records,
-  );
-  const [saved, setSaved] = useState(false);
+  // ===== 调试日志（仅 development） =====
+  if (process.env.NODE_ENV === "development") {
+    console.log("[CheckIn] Mode:", isLoggedIn ? "cloud" : "local");
+    console.log(
+      "[CheckIn] Actions source:",
+      isLoggedIn
+        ? `cloud (${cloudActions.length})`
+        : localActions.length > 0
+          ? `local (${localActions.length})`
+          : `mock (${mockActions.length})`,
+    );
+    console.log("[CheckIn] todayActions count:", todayActions.length);
+    console.log("[CheckIn] actionRecords count:", actionRecords.length);
+    console.log(
+      "[CheckIn] cloudDailyLogs:",
+      cloudDailyLogs.length,
+      "| cloudActionRecords:",
+      cloudActionRecords.length,
+    );
+    console.log(
+      "[CheckIn] actionRecord sample ids:",
+      actionRecords.slice(0, 3).map((r) => r.actionId),
+    );
+  }
 
   // ===== 更新 DailyLog 字段 =====
   const updateLog = useCallback(
@@ -145,6 +287,7 @@ export default function CheckInPage() {
         updatedAt: new Date().toISOString(),
       }));
       setSaved(false);
+      setSaveError(null);
     },
     [],
   );
@@ -152,16 +295,34 @@ export default function CheckInPage() {
   // ===== 更新某条 ActionRecord 的状态 =====
   const updateRecordStatus = useCallback(
     (actionId: string, status: ActionRecordStatus) => {
-      setActionRecords((prev) =>
-        prev.map((r) =>
+      setActionRecords((prev) => {
+        // 如果该 actionId 不存在于当前 records 中，创建新 record
+        const exists = prev.some((r) => r.actionId === actionId);
+        if (!exists) {
+          const now = new Date().toISOString();
+          const newRecord: ActionRecord = {
+            id: stableActionRecordId(date, actionId),
+            userId: USER_ID,
+            actionId,
+            dailyLogId: dailyLog.id,
+            date,
+            status,
+            note: "",
+            createdAt: now,
+            updatedAt: now,
+          };
+          return [...prev, newRecord];
+        }
+        return prev.map((r) =>
           r.actionId === actionId
             ? { ...r, status, updatedAt: new Date().toISOString() }
             : r,
-        ),
-      );
+        );
+      });
       setSaved(false);
+      setSaveError(null);
     },
-    [],
+    [date, dailyLog.id],
   );
 
   // ===== 更新某条 ActionRecord 的备注 =====
@@ -174,30 +335,127 @@ export default function CheckInPage() {
       ),
     );
     setSaved(false);
+    setSaveError(null);
   }, []);
 
   // ===== 保存 =====
-  const handleSave = useCallback(() => {
-    // 确保 id 稳定
-    const logWithStableId = { ...dailyLog, id: stableDailyLogId(date) };
-    upsertTodayDailyLog(logWithStableId);
+  const handleSave = useCallback(async () => {
+    setSaveError(null);
+    setSaved(false);
 
-    const recordsWithStableId = actionRecords.map((r) => ({
-      ...r,
-      id: stableActionRecordId(date, r.actionId),
-      dailyLogId: stableDailyLogId(date),
-      updatedAt: new Date().toISOString(),
-    }));
-    upsertActionRecordsForDate(date, recordsWithStableId);
+    try {
+      if (isLoggedIn) {
+        // === 已登录：保存到 Supabase ===
 
-    // 更新本地 state 为稳定 ID 版本（便于回显）
-    setDailyLog(logWithStableId);
-    setActionRecords(recordsWithStableId);
+        // 过滤：只保留 actionId 存在于 cloudActions 的记录
+        const validRecords = actionRecords.filter((r) => {
+          const exists = cloudActions.some((a) => a.id === r.actionId);
+          if (!exists && process.env.NODE_ENV === "development") {
+            console.warn(
+              "[CheckIn] Filtered out invalid record (actionId not in cloudActions):",
+              r.actionId,
+            );
+          }
+          return exists;
+        });
 
-    setSaved(true);
+        // UUID 校验：拒绝非 UUID 的 actionId
+        const invalidUuidRecords = validRecords.filter(
+          (r) => !isUuid(r.actionId),
+        );
+        if (invalidUuidRecords.length > 0) {
+          const ids = invalidUuidRecords.map((r) => r.actionId).join(", ");
+          throw new Error(
+            `云端保存失败：检测到非 UUID actionId (${ids})，请刷新页面后重试。`,
+          );
+        }
+
+        if (process.env.NODE_ENV === "development") {
+          console.log("[CheckIn] Saving to cloud - payload:", {
+            dailyLog: { date: dailyLog.date, sleepHours: dailyLog.sleepHours },
+            actionRecords: validRecords.map((r) => ({
+              actionId: r.actionId,
+              status: r.status,
+            })),
+            filteredCount: actionRecords.length - validRecords.length,
+          });
+        }
+
+        const logToSave = {
+          ...dailyLog,
+          updatedAt: new Date().toISOString(),
+        };
+
+        await upsertDailyCheckIn(logToSave, validRecords);
+
+        // 更新本地 state 为验证后的数据
+        setActionRecords(validRecords);
+        setSaveMessage("✓ 已保存到云端");
+        setSaved(true);
+      } else {
+        // === 未登录：保存到 localStorage ===
+        const logWithStableId = {
+          ...dailyLog,
+          id: stableDailyLogId(date),
+          updatedAt: new Date().toISOString(),
+        };
+        upsertTodayDailyLog(logWithStableId);
+
+        const recordsWithStableId = actionRecords.map((r) => ({
+          ...r,
+          id: stableActionRecordId(date, r.actionId),
+          dailyLogId: stableDailyLogId(date),
+          updatedAt: new Date().toISOString(),
+        }));
+        upsertActionRecordsForDate(date, recordsWithStableId);
+
+        setDailyLog(logWithStableId);
+        setActionRecords(recordsWithStableId);
+        setSaveMessage("✓ 已保存到本地");
+        setSaved(true);
+      }
+    } catch (err) {
+      const msg =
+        err instanceof Error ? err.message : "保存失败，请重试";
+      setSaveError(msg);
+      setSaved(false);
+    }
+
     // 3 秒后隐藏提示
-    setTimeout(() => setSaved(false), 3000);
-  }, [dailyLog, actionRecords, date]);
+    setTimeout(() => {
+      setSaved(false);
+      setSaveMessage("");
+    }, 3000);
+  }, [
+    dailyLog,
+    actionRecords,
+    date,
+    isLoggedIn,
+    cloudActions,
+    upsertDailyCheckIn,
+  ]);
+
+  // ===== 加载中 =====
+  if (isLoggedIn && cloudLoading) {
+    return (
+      <div className="space-y-6">
+        <section>
+          <p className="text-xs text-zinc-500 dark:text-zinc-400">
+            {new Date().toLocaleDateString("zh-CN", {
+              year: "numeric",
+              month: "long",
+              day: "numeric",
+              weekday: "long",
+            })}
+          </p>
+          <h1 className="text-xl font-semibold mt-1">每日记录</h1>
+        </section>
+        <p className="text-sm text-zinc-400 dark:text-zinc-500 text-center py-12">
+          加载中...
+        </p>
+      </div>
+    );
+  }
 
   // ===== 渲染 =====
   return (
@@ -308,7 +566,11 @@ export default function CheckInPage() {
         <h2 className="text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wide">
           今日行动
         </h2>
-        {todayActions.length > 0 ? (
+        {isLoggedIn && cloudActions.length === 0 ? (
+          <p className="text-sm text-zinc-400 dark:text-zinc-500 mt-3">
+            暂无云端行动，请先在 Goals 页面创建本周行动
+          </p>
+        ) : todayActions.length > 0 ? (
           <div className="mt-3 space-y-4">
             {todayActions.map(({ action }) => {
               const record = actionRecords.find(
@@ -409,13 +671,18 @@ export default function CheckInPage() {
         >
           保存记录
         </button>
-        {saved && (
+        {saved && saveMessage && (
           <p className="mt-2 text-center text-sm text-emerald-600 dark:text-emerald-400 transition">
-            ✓ 已保存
+            {saveMessage}
+          </p>
+        )}
+        {saveError && (
+          <p className="mt-2 text-center text-sm text-red-600 dark:text-red-400 transition">
+            {saveError}
           </p>
         )}
         <p className="mt-2 text-xs text-zinc-400 dark:text-zinc-500 text-center">
-          数据保存在浏览器本地{hasCloudActions && "，同时同步到云端"}
+          {isLoggedIn ? "数据保存到云端" : "数据保存在浏览器本地"}
         </p>
       </section>
     </div>

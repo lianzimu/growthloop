@@ -284,12 +284,16 @@ SDK 会自动拼接 API 路径，手动添加 `/rest/v1/` 会导致请求失败�
 - 替换当前页面中的数据读写逻辑
 - **暂时保留 localStorage 逻辑**，双写或通过 feature flag 切换
 
-### Step 5：daily_logs/action_records 云端 CRUD
+### Step 5：daily_logs/action_records 云端 CRUD ✅（已完成）
 
-- 创建 `lib/supabase/daily-logs.ts`
-- 创建 `lib/supabase/action-records.ts`
-- 替换 Check-in 页面的数据读写
-- 验证数据正确存储到 Supabase
+- ✅ 创建 `lib/supabase/daily-logs.ts`（getDailyLogs、getDailyLogsByDateRange、getDailyLogByDate、upsertDailyLog、deleteDailyLog）
+- ✅ 创建 `lib/supabase/action-records.ts`（getActionRecords、getActionRecordsByDate、getActionRecordsByDateRange、upsertActionRecordsForDate、deleteActionRecordsByDate）
+- ✅ 修改 `app/check-in/page.tsx`：已登录时写入 Supabase，加载时回填云端记录，显示"已保存到云端"；未登录仍使用 localStorage
+- ✅ 修改 `app/page.tsx`（Dashboard）：已登录时 dailyLogs/actionRecords 来自 Supabase
+- ✅ 修改 `app/review/page.tsx`（Review）：已登录时统计数据来自 Supabase
+- ✅ 登录用户的 goals/actions/daily_logs/action_records 保存到 Supabase
+- ✅ 未登录用户仍然使用 localStorage
+- ⚠️ localStorage → Supabase 迁移将在 Step 6 单独实现
 
 ### Step 6：localStorage → Supabase 迁移
 

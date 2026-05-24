@@ -2,7 +2,8 @@
  * 周复盘页 - 每周总结与回顾
  *
  * Milestone 2 Step 2.1: 使用 useGrowthLoopLocalData 实现响应式数据读取。
- * localStorage 有数据优先用，无数据 fallback mock。
+ * Milestone 3 Step 5: 已登录使用 Supabase dailyLogs/actionRecords，未登录使用 localStorage。
+ * Milestone 3 Step 5.1: 修复 Review 无数据 bug — 添加 cloudLoading 状态、调试日志、空状态区分。
  */
 
 "use client";
@@ -10,6 +11,7 @@
 import { actionRecords as mockActionRecords, dailyLogs as mockDailyLogs } from "@/lib/mock-data";
 import { getWeeklyReviewStats } from "@/lib/stats";
 import { useGrowthLoopLocalData } from "@/hooks/use-growthloop-local-data";
+import { useGrowthLoopCloudData } from "@/hooks/use-growthloop-cloud-data";
 
 export default function ReviewPage() {
   const {
@@ -17,10 +19,46 @@ export default function ReviewPage() {
     actionRecords: localActionRecords,
   } = useGrowthLoopLocalData();
 
-  // 优先 localStorage，无数据 fallback mock
-  const logs = localDailyLogs.length > 0 ? localDailyLogs : mockDailyLogs;
-  const records =
-    localActionRecords.length > 0 ? localActionRecords : mockActionRecords;
+  const {
+    dailyLogs: cloudDailyLogs,
+    actionRecords: cloudActionRecords,
+    isLoggedIn,
+    loading: cloudLoading,
+  } = useGrowthLoopCloudData();
+
+  // 数据源策略：
+  // 已登录 → 仅 cloud 数据（即使为空也不 fallback localStorage/mock）
+  // 未登录 → localStorage → mock
+  const logs = isLoggedIn
+    ? cloudDailyLogs
+    : localDailyLogs.length > 0
+      ? localDailyLogs
+      : mockDailyLogs;
+  const records = isLoggedIn
+    ? cloudActionRecords
+    : localActionRecords.length > 0
+      ? localActionRecords
+      : mockActionRecords;
+
+  // ===== 调试日志（仅 development） =====
+  if (process.env.NODE_ENV === "development") {
+    console.log("[Review] Mode:", isLoggedIn ? "cloud" : "local");
+    console.log("[Review] cloudLoading:", cloudLoading);
+    console.log(
+      "[Review] Data - dailyLogs:",
+      logs.length,
+      "| actionRecords:",
+      records.length,
+    );
+    if (isLoggedIn) {
+      console.log(
+        "[Review] Cloud raw - dailyLogs:",
+        cloudDailyLogs.length,
+        "| actionRecords:",
+        cloudActionRecords.length,
+      );
+    }
+  }
 
   const stats = getWeeklyReviewStats(logs, records);
 
@@ -64,6 +102,31 @@ export default function ReviewPage() {
     return "text-red-500 dark:text-red-400";
   }
 
+  // ===== 加载中（云端模式） =====
+  if (isLoggedIn && cloudLoading) {
+    return (
+      <div className="space-y-6">
+        <section>
+          <p className="text-xs text-zinc-500 dark:text-zinc-400">
+            本周数据汇总
+          </p>
+          <h1 className="text-xl font-semibold mt-1">周复盘</h1>
+          <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-1">
+            {weekRange}
+          </p>
+        </section>
+        <p className="text-sm text-zinc-400 dark:text-zinc-500 text-center py-12">
+          加载中...
+        </p>
+      </div>
+    );
+  }
+
+  // ===== 完全空状态判断 =====
+  const hasDailyLogs = logs.length > 0;
+  const hasActionRecords = records.length > 0;
+  const isCompletelyEmpty = !hasDailyLogs && !hasActionRecords;
+
   return (
     <div className="space-y-6">
       {/* ===== 页面标题 ===== */}
@@ -76,6 +139,17 @@ export default function ReviewPage() {
           {weekRange}
         </p>
       </section>
+
+      {/* ===== 完全空状态 ===== */}
+      {isCompletelyEmpty && (
+        <section className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-4 bg-white dark:bg-zinc-900">
+          <p className="text-sm text-zinc-400 dark:text-zinc-500">
+            {isLoggedIn
+              ? "暂无云端数据，请先在 Check-in 页面完成每日记录"
+              : "暂无本周数据，开始你第一次 Check-in"}
+          </p>
+        </section>
+      )}
 
       {/* ===== 行动完成概览 ===== */}
       <section className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-4 bg-white dark:bg-zinc-900">
@@ -143,7 +217,9 @@ export default function ReviewPage() {
           </div>
         ) : (
           <p className="text-sm text-zinc-400 dark:text-zinc-500 mt-3">
-            暂无本周数据
+            {hasDailyLogs
+              ? "暂无本周行动记录"
+              : "暂无本周数据"}
           </p>
         )}
       </section>

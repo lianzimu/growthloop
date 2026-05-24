@@ -234,38 +234,54 @@ npm install @supabase/supabase-js @supabase/ssr
 
 ### 8.1 目标
 
-将 Check-in 页面和 Dashboard 的数据读取接入 Supabase 云端数据。
+实现 Daily Check-in 完整的云端读写，并将 Dashboard / Review 页面切换到 Supabase 数据源。
 
 ### 8.2 实际产出物
 
 | 文件 | 说明 |
 |------|------|
-| `hooks/use-growthloop-cloud-data.ts`（已更新） | 新增 getActionsByDate 支持，Cloud-First 数据加载 |
-| `app/check-in/page.tsx`（已修改） | import useGrowthLoopCloudData，cloudActions 参与 DayRecord 加载 |
-| `app/page.tsx`（已修改） | import useGrowthLoopCloudData，cloudGoals/cloudActions/cloudDomains 参与 domainGroups 和 reviewItems |
-| `app/goals/page.tsx`（已修改） | import useGrowthLoopCloudData，Cloud-First 数据源切换 |
+| `types/supabase.ts`（已更新） | 新增 DailyLogRow、ActionRecordRow 行类型 |
+| `lib/supabase/mappers.ts`（已更新） | 新增 mapDailyLogRowToDailyLog、mapActionRecordRowToActionRecord、mapDailyLogToInsert、mapActionRecordToInsert |
+| `lib/supabase/daily-logs.ts`（新增） | Daily Log CRUD：getDailyLogs、getDailyLogsByDateRange、getDailyLogByDate、upsertDailyLog、deleteDailyLog |
+| `lib/supabase/action-records.ts`（新增） | Action Record CRUD：getActionRecords、getActionRecordsByDate、getActionRecordsByDateRange、upsertActionRecordsForDate、deleteActionRecordsByDate |
+| `hooks/use-growthloop-cloud-data.ts`（已更新） | 新增 dailyLogs/actionRecords 状态、refreshDailyData、upsertDailyCheckIn 方法 |
+| `app/check-in/page.tsx`（已修改） | 已登录时写入 Supabase（daily_log + action_records），加载时回填云端记录，显示"已保存到云端" |
+| `app/page.tsx`（已修改） | 已登录时 dailyLogs/actionRecords 来自 Supabase，最近 3 天状态和本周完成率使用云端数据 |
+| `app/review/page.tsx`（已修改） | 已登录时 dailyLogs/actionRecords 来自 Supabase，统计数据使用云端数据 |
 
 ### 8.3 设计说明
 
-Step 5 的核心是让 Dashboard 和 Check-in 页面能够读取云端数据。
+**写入流程**（Check-in 页面）：
+1. 用户提交 Check-in → 检查登录状态
+2. 未登录 → localStorage（保持原有逻辑）
+3. 已登录 → `upsertDailyCheckIn(dailyLog, actionRecords)`
+   - 先 upsert daily_log（唯一约束：user_id + date）
+   - 获得 daily_log.id
+   - 再 upsert action_records（唯一约束：user_id + date + action_id）
+   - 刷新本地 state
 
-当前已实现：
-- Dashboard 页面：cloudGoals/cloudActions/cloudDomains 通过 useGrowthLoopCloudData 加载，Cloud-First 参与 domainGroups 和 reviewItems 计算
-- Check-in 页面：cloudActions 通过 useGrowthLoopCloudData 加载，参与 DayRecord 的 action 完成列表
-- Goals 页面：Cloud-First 数据源展示
+**读取流程**（Dashboard / Review 页面）：
+- 已登录 → `useGrowthLoopCloudData` 返回 cloud dailyLogs/actionRecords
+- 未登录 → `useGrowthLoopLocalData` 返回 localStorage 数据 + mock fallback
+- 不存在双写、不存在旧数据迁移
 
-后续待完成（Step 6）：
-- 独立的 `daily-logs.ts` 和 `action-records.ts` CRUD 模块
-- Check-in 写入逻辑迁移到 Supabase（当前写入仍使用 localStorage）
-- 迁移工具批量写入 daily_logs 和 action_records
+**去重保证**：
+- daily_logs：Supabase 唯一约束 `UNIQUE(user_id, date)` + upsert
+- action_records：Supabase 唯一约束 `UNIQUE(user_id, date, action_id)` + upsert
+- 同一天同一 action 只有一条记录
 
 ### 8.4 验收标准
 
-- [x] Dashboard 页面正常加载（Cloud-First：云端 goals/actions/domains 参与计算）
-- [x] Check-in 页面正常加载当天 action 列表（Cloud-First：云端 actions 参与 DayRecord）
-- [x] Goals 页面正常展示目标/行动（Cloud-First 数据源）
-- [x] 新建目标/行动仍通过 localStorage 工作
-- [x] localStorage 功能保留不删除
+- [x] 登录用户 Check-in 成功保存到 Supabase daily_logs / action_records 表
+- [x] 登录用户刷新 Check-in 页面后能看到今天已保存的记录
+- [x] 登录用户保存成功显示"已保存到云端"
+- [x] 未登录用户 Check-in 继续使用 localStorage，显示"已保存到本地"
+- [x] Dashboard 页面登录状态下展示云端最近 3 天状态
+- [x] Dashboard 页面登录状态下展示云端本周完成率
+- [x] Review 页面登录状态下展示云端统计数据
+- [x] 登录但无记录时，Dashboard/Review 显示真实空状态（不 fallback mock）
+- [x] localStorage 功能完整保留，不受影响
+- [x] 不做 localStorage → Supabase 迁移
 - [x] `npx tsc --noEmit` 通过
 - [x] `npx eslint .` 通过（0 错误 0 警告）
 

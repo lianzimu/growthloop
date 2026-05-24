@@ -1,18 +1,18 @@
 /**
  * GrowthLoop 云端数据 Hook
  *
- * Milestone 3 Step 4.1: 修复云端写入路径。
+ * Milestone 3 Step 5: 添加 dailyLogs / actionRecords 云端读写。
  *
- * - 已登录时：domains/goals/actions 仅使用 Supabase 数据
+ * - 已登录时：domains/goals/actions/dailyLogs/actionRecords 仅使用 Supabase 数据
  * - 未登录时：hook 返回空数据，页面 fallback 到 localStorage/mock
- * - 暴露 createGoal/createAction/refresh 供页面调用
+ * - 暴露 createGoal/createAction/refresh/upsertDailyCheckIn/refreshDailyData 供页面调用
  * - 登录后自动调用 ensureDefaultDomains
  */
 
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import type { Domain, Goal, Action } from "@/types";
+import type { Domain, Goal, Action, DailyLog, ActionRecord } from "@/types";
 import type { GoalInsert, ActionInsert } from "@/types/supabase";
 
 // ==================== 类型 ====================
@@ -23,6 +23,10 @@ export interface UseCloudDataResult {
   goals: Goal[];
   /** Supabase 返回的 actions */
   actions: Action[];
+  /** Supabase 返回的 dailyLogs */
+  dailyLogs: DailyLog[];
+  /** Supabase 返回的 actionRecords */
+  actionRecords: ActionRecord[];
   /** 是否有 Supabase 返回的 domains */
   hasCloudDomains: boolean;
   /** 是否有 Supabase 返回的 goals */
@@ -35,12 +39,25 @@ export interface UseCloudDataResult {
   loading: boolean;
   /** 云端加载是否出错 */
   error: string | null;
-  /** 刷新云端数据（创建/更新后调用） */
+  /** 刷新云端全部数据（创建/更新后调用） */
   refresh: () => Promise<void>;
+  /** 刷新 dailyLogs + actionRecords */
+  refreshDailyData: () => Promise<void>;
   /** 创建 goal（仅已登录时可用） */
   createGoal: (input: GoalInsert) => Promise<Goal>;
   /** 创建 action（仅已登录时可用） */
   createAction: (input: ActionInsert) => Promise<Action>;
+  /**
+   * 保存每日签到到 Supabase
+   *
+   * @param dailyLog - 每日日志
+   * @param records - action 完成记录列表
+   * @returns 保存后的 dailyLog（含 Supabase id）
+   */
+  upsertDailyCheckIn: (
+    dailyLog: DailyLog,
+    records: ActionRecord[],
+  ) => Promise<DailyLog>;
 }
 
 // ==================== Hook ====================
@@ -48,6 +65,8 @@ export function useGrowthLoopCloudData(): UseCloudDataResult {
   const [domains, setDomains] = useState<Domain[]>([]);
   const [goals, setGoals] = useState<Goal[]>([]);
   const [actions, setActions] = useState<Action[]>([]);
+  const [dailyLogs, setDailyLogs] = useState<DailyLog[]>([]);
+  const [actionRecords, setActionRecords] = useState<ActionRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -94,7 +113,7 @@ export function useGrowthLoopCloudData(): UseCloudDataResult {
     };
   }, []);
 
-  // 加载云端数据（仅已登录时）
+  // 加载云端 domains/goals/actions（仅已登录时）
   const loadCloudData = useCallback(async (): Promise<{
     domains: Domain[];
     goals: Goal[];
@@ -123,10 +142,54 @@ export function useGrowthLoopCloudData(): UseCloudDataResult {
         });
       }
 
-      return { domains: domainsData, goals: goalsData, actions: actionsData, error: null };
+      return {
+        domains: domainsData,
+        goals: goalsData,
+        actions: actionsData,
+        error: null,
+      };
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to load cloud data";
+      const msg =
+        err instanceof Error ? err.message : "Failed to load cloud data";
       return { domains: [], goals: [], actions: [], error: msg };
+    }
+  }, []);
+
+  // 加载 dailyLogs + actionRecords
+  const loadDailyData = useCallback(async (): Promise<{
+    dailyLogs: DailyLog[];
+    actionRecords: ActionRecord[];
+    error: string | null;
+  }> => {
+    try {
+      const [{ getDailyLogs }, { getActionRecords }] = await Promise.all([
+        import("@/lib/supabase/daily-logs"),
+        import("@/lib/supabase/action-records"),
+      ]);
+
+      const [dailyLogsData, actionRecordsData] = await Promise.all([
+        getDailyLogs().catch(() => [] as DailyLog[]),
+        getActionRecords().catch(() => [] as ActionRecord[]),
+      ]);
+
+      if (process.env.NODE_ENV === "development") {
+        console.log("[GrowthLoop Cloud] Daily data loaded", {
+          dailyLogs: dailyLogsData.length,
+          actionRecords: actionRecordsData.length,
+        });
+      }
+
+      return {
+        dailyLogs: dailyLogsData,
+        actionRecords: actionRecordsData,
+        error: null,
+      };
+    } catch (err) {
+      const msg =
+        err instanceof Error
+          ? err.message
+          : "Failed to load daily data";
+      return { dailyLogs: [], actionRecords: [], error: msg };
     }
   }, []);
 
@@ -140,6 +203,8 @@ export function useGrowthLoopCloudData(): UseCloudDataResult {
           setDomains([]);
           setGoals([]);
           setActions([]);
+          setDailyLogs([]);
+          setActionRecords([]);
           setLoading(false);
           setError(null);
         }
@@ -162,18 +227,24 @@ export function useGrowthLoopCloudData(): UseCloudDataResult {
           console.log("[GrowthLoop Cloud] Default domains ensured");
         }
 
-        // 加载全量数据
-        const result = await loadCloudData();
+        // 并行加载全量数据
+        const [coreResult, dailyResult] = await Promise.all([
+          loadCloudData(),
+          loadDailyData(),
+        ]);
 
         if (!cancelled) {
-          setDomains(result.domains);
-          setGoals(result.goals);
-          setActions(result.actions);
-          setError(result.error);
+          setDomains(coreResult.domains);
+          setGoals(coreResult.goals);
+          setActions(coreResult.actions);
+          setDailyLogs(dailyResult.dailyLogs);
+          setActionRecords(dailyResult.actionRecords);
+          setError(coreResult.error ?? dailyResult.error);
         }
       } catch (err) {
         if (!cancelled) {
-          const msg = err instanceof Error ? err.message : "Failed to init cloud data";
+          const msg =
+            err instanceof Error ? err.message : "Failed to init cloud data";
           setError(msg);
           if (process.env.NODE_ENV === "development") {
             console.error("[GrowthLoop Cloud] Init error:", msg);
@@ -191,9 +262,9 @@ export function useGrowthLoopCloudData(): UseCloudDataResult {
     return () => {
       cancelled = true;
     };
-  }, [isLoggedIn, loadCloudData]);
+  }, [isLoggedIn, loadCloudData, loadDailyData]);
 
-  // refresh 方法：重新加载全量数据
+  // refresh 方法：重新加载全量数据（包括 domains/goals/actions）
   const refresh = useCallback(async () => {
     if (!isLoggedIn) return;
     const result = await loadCloudData();
@@ -202,6 +273,15 @@ export function useGrowthLoopCloudData(): UseCloudDataResult {
     setActions(result.actions);
     setError(result.error);
   }, [isLoggedIn, loadCloudData]);
+
+  // refreshDailyData：重新加载 dailyLogs + actionRecords
+  const refreshDailyData = useCallback(async () => {
+    if (!isLoggedIn) return;
+    const result = await loadDailyData();
+    setDailyLogs(result.dailyLogs);
+    setActionRecords(result.actionRecords);
+    if (result.error) setError(result.error);
+  }, [isLoggedIn, loadDailyData]);
 
   // createGoal 方法
   const createGoalFn = useCallback(
@@ -257,6 +337,56 @@ export function useGrowthLoopCloudData(): UseCloudDataResult {
     [isLoggedIn],
   );
 
+  // upsertDailyCheckIn：保存每日签到
+  const upsertDailyCheckIn = useCallback(
+    async (
+      dailyLog: DailyLog,
+      records: ActionRecord[],
+    ): Promise<DailyLog> => {
+      if (!isLoggedIn) {
+        throw new Error("Cannot save check-in: user not logged in");
+      }
+
+      // dev 模式下输出详细 payload 用于调试
+      if (process.env.NODE_ENV === "development") {
+        console.log("[GrowthLoop Cloud] Saving check-in", {
+          date: dailyLog.date,
+          recordsCount: records.length,
+          recordActionIds: records.map((r) => r.actionId),
+        });
+      }
+
+      const [{ upsertDailyLog }, { upsertActionRecordsForDate }] =
+        await Promise.all([
+          import("@/lib/supabase/daily-logs"),
+          import("@/lib/supabase/action-records"),
+        ]);
+
+      // 1. 先 upsert dailyLog，获得 dailyLog.id
+      const savedLog = await upsertDailyLog(dailyLog);
+
+      // 2. 再 upsert actionRecords
+      const savedRecords = await upsertActionRecordsForDate(
+        dailyLog.date,
+        savedLog.id,
+        records,
+      );
+
+      if (process.env.NODE_ENV === "development") {
+        console.log("[GrowthLoop Cloud] Check-in saved", {
+          dailyLogId: savedLog.id,
+          savedRecordsCount: savedRecords.length,
+        });
+      }
+
+      // 3. 刷新本地 state
+      await refreshDailyData();
+
+      return savedLog;
+    },
+    [isLoggedIn, refreshDailyData],
+  );
+
   const hasCloudDomains = domains.length > 0;
   const hasCloudGoals = goals.length > 0;
   const hasCloudActions = actions.length > 0;
@@ -265,6 +395,8 @@ export function useGrowthLoopCloudData(): UseCloudDataResult {
     domains,
     goals,
     actions,
+    dailyLogs,
+    actionRecords,
     hasCloudDomains,
     hasCloudGoals,
     hasCloudActions,
@@ -272,7 +404,9 @@ export function useGrowthLoopCloudData(): UseCloudDataResult {
     loading,
     error,
     refresh,
+    refreshDailyData,
     createGoal: createGoalFn,
     createAction: createActionFn,
+    upsertDailyCheckIn,
   };
 }
