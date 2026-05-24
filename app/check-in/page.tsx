@@ -142,6 +142,7 @@ export default function CheckInPage() {
   );
   const [actionRecords, setActionRecords] = useState<ActionRecord[]>([]);
   const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState("");
   const [saveError, setSaveError] = useState<string | null>(null);
 
@@ -345,6 +346,7 @@ export default function CheckInPage() {
   const handleSave = useCallback(async () => {
     setSaveError(null);
     setSaved(false);
+    setSaving(true);
 
     try {
       if (isLoggedIn) {
@@ -367,10 +369,7 @@ export default function CheckInPage() {
           (r) => !isUuid(r.actionId),
         );
         if (invalidUuidRecords.length > 0) {
-          const ids = invalidUuidRecords.map((r) => r.actionId).join(", ");
-          throw new Error(
-            `云端保存失败：检测到非 UUID actionId (${ids})，请刷新页面后重试。`,
-          );
+          throw new Error("数据格式异常，请刷新页面后重试");
         }
 
         if (DEV) {
@@ -419,10 +418,21 @@ export default function CheckInPage() {
         setSaved(true);
       }
     } catch (err) {
-      const msg =
+      const rawMsg =
         err instanceof Error ? err.message : "保存失败，请重试";
-      setSaveError(msg);
+      // 对用户展示简化的错误信息
+      const userMsg = rawMsg.includes("UUID") || rawMsg.includes("actionId")
+        ? "数据格式异常，请刷新页面后重试"
+        : rawMsg.length > 60
+          ? "保存失败，请稍后重试"
+          : rawMsg;
+      setSaveError(userMsg);
       setSaved(false);
+      if (DEV) {
+        console.error("[CheckIn] Save error:", err);
+      }
+    } finally {
+      setSaving(false);
     }
 
     // 3 秒后隐藏提示
@@ -671,9 +681,10 @@ export default function CheckInPage() {
         <button
           type="button"
           onClick={handleSave}
-          className="w-full rounded-xl bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-500 dark:hover:bg-emerald-600 text-white font-medium py-3 text-sm transition active:scale-[0.98]"
+          disabled={saving}
+          className="w-full rounded-xl bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-500 dark:hover:bg-emerald-600 text-white font-medium py-3 text-sm transition active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          保存记录
+          {saving ? "保存中..." : "保存记录"}
         </button>
         {saved && saveMessage && (
           <p className="mt-2 text-center text-sm text-emerald-600 dark:text-emerald-400 transition">

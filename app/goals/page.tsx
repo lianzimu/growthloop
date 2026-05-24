@@ -260,11 +260,12 @@ export default function GoalsPage() {
       setGoalSaved(true);
       setTimeout(() => setGoalSaved(false), 3000);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "保存失败";
-      setGoalSaveError(msg);
+      const rawMsg = err instanceof Error ? err.message : "保存失败";
+      const userMsg = rawMsg.length > 80 ? "保存失败，请稍后重试" : rawMsg;
+      setGoalSaveError(userMsg);
       setTimeout(() => setGoalSaveError(null), 5000);
       if (process.env.NODE_ENV === "development") {
-        console.error("[GrowthLoop Goals] Failed to save goal:", msg);
+        console.error("[GrowthLoop Goals] Failed to save goal:", err);
       }
     } finally {
       setGoalSaving(false);
@@ -339,11 +340,12 @@ export default function GoalsPage() {
       setActionSaved(true);
       setTimeout(() => setActionSaved(false), 3000);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "保存失败";
-      setActionSaveError(msg);
+      const rawMsg = err instanceof Error ? err.message : "保存失败";
+      const userMsg = rawMsg.length > 80 ? "保存失败，请稍后重试" : rawMsg;
+      setActionSaveError(userMsg);
       setTimeout(() => setActionSaveError(null), 5000);
       if (process.env.NODE_ENV === "development") {
-        console.error("[GrowthLoop Goals] Failed to save action:", msg);
+        console.error("[GrowthLoop Goals] Failed to save action:", err);
       }
     } finally {
       setActionSaving(false);

@@ -83,11 +83,11 @@ export async function POST(request: Request) {
     // 7. 返回
     return NextResponse.json(result);
   } catch (err) {
-    const message =
-      err instanceof Error ? err.message : "Unknown error";
-    console.error("[WeeklyReview API] Error:", message);
+    if (process.env.NODE_ENV === "development") {
+      console.error("[WeeklyReview API] Error:", err instanceof Error ? err.message : "Unknown error");
+    }
     return NextResponse.json(
-      { error: message },
+      { error: "AI 复盘生成失败，请稍后重试" },
       { status: 500 },
     );
   }

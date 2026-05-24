@@ -38,7 +38,17 @@ export default function LoginPage() {
         });
 
         if (signUpError) {
-          setError(signUpError.message);
+          const msg = signUpError.message;
+          // 简化常见 Supabase 错误
+          if (msg.includes("already registered") || msg.includes("already exists")) {
+            setError("该邮箱已注册，请直接登录");
+          } else if (msg.includes("password") && msg.includes("6")) {
+            setError("密码至少 6 位");
+          } else if (msg.length > 80) {
+            setError("注册失败，请稍后重试");
+          } else {
+            setError(msg);
+          }
         } else {
           setSuccessMsg(
             "注册成功！如果 Supabase 启用了邮箱确认，请检查收件箱确认邮箱后即可登录。也可以在下方切换到登录尝试。",
@@ -52,7 +62,16 @@ export default function LoginPage() {
         });
 
         if (signInError) {
-          setError(signInError.message);
+          const msg = signInError.message;
+          if (msg.includes("Invalid login credentials") || msg.includes("Invalid")) {
+            setError("邮箱或密码错误");
+          } else if (msg.includes("Email not confirmed") || msg.includes("not confirmed")) {
+            setError("请先确认邮箱后再登录");
+          } else if (msg.length > 80) {
+            setError("登录失败，请稍后重试");
+          } else {
+            setError(msg);
+          }
         } else {
           router.push("/");
           router.refresh();
